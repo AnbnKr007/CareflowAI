@@ -1,6 +1,19 @@
 // Firebase Realtime Database URL (without trailing slash)
 const FIREBASE_URL = "https://careflowai-2bd8b-default-rtdb.firebaseio.com";
 
+// Firebase fetch wrapper: fetch() does NOT throw on 401/403, so a locked-down DB
+// would silently "succeed". This makes permission/network failures visible.
+async function fbFetch(url, opts) {
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+        throw new Error(res.status === 401 || res.status === 403
+            ? `Firebase rejected the request (${res.status}). Open Firebase Console > Realtime Database > Rules and allow read/write.`
+            : `Firebase error ${res.status}`);
+    }
+    return res;
+}
+function cleanClinicCode(v) { return String(v || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''); }
+
 // Cookie Helpers
 function setCookie(name, value, days = 30) {
     const d = new Date();
@@ -113,7 +126,7 @@ quickClinicSelect.addEventListener('change', () => {
 
 doctorFilterForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    currentClinic = docClinicCode.value.trim().toUpperCase();
+    currentClinic = cleanClinicCode(docClinicCode.value) || 'CARE-101';
     currentDepartment = docDepartment.value;
     const docName = docNameInput.value.trim() || 'Dr. Sharma';
 
@@ -129,9 +142,9 @@ doctorFilterForm.addEventListener('submit', (e) => {
     fetchCloudQueue();
 });
 
-refreshQueueBtn.addEventListener('click', fetchCloudQueue);
+refreshQueueBtn.addEventListener('click', () => fetchCloudQueue());
 docDepartment.addEventListener('change', () => doctorFilterForm.dispatchEvent(new Event('submit')));
-docStatusFilter.addEventListener('change', fetchCloudQueue);
+docStatusFilter.addEventListener('change', () => fetchCloudQueue());
 
 // Sort comparator: strictly by Priority Tier (CRITICAL > URGENT > ROUTINE), then by manualOrderOffset (high to low), then newest timestamp
 function sortCasesByPriority(cases) {
@@ -150,11 +163,11 @@ function sortCasesByPriority(cases) {
 }
 
 // Fetch and Render Prioritized Cases
-async function fetchCloudQueue() {
-    triageQueue.innerHTML = '<div class="loading-box">Syncing prioritized queue from hospital cloud...</div>';
+async function fetchCloudQueue(silent = false) {
+    if (!silent) triageQueue.innerHTML = '<div class="loading-box">Syncing prioritized queue from hospital cloud...</div>';
 
     try {
-        const response = await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases.json`);
+        const response = await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases.json`);
         const data = await response.json();
 
         if (!data) {
@@ -230,7 +243,7 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
 
     const sourcesHtml = sourceLinks.map(s => `
         <div class="source-link-item">
-            <span class="source-tag"></span>
+            <span class="source-tag">${escapeHtml(s.source || 'Unknown source')}</span>
             <span>${escapeHtml(s.claim)}</span>
             <small class="conf-tag">Confidence: ${escapeHtml(s.confidence || 'High')}</small>
         </div>
@@ -295,7 +308,7 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
     `).join('');
 
     const card = document.createElement('div');
-    card.className = `triage-card ${priorityClass}${isDissolved ? 'case-dissolved' : ''}`;
+    card.className = `triage-card ${priorityClass} ${isDissolved ? 'case-dissolved' : ''}`;
     card.innerHTML = `
         <div class="triage-card-layout">
             <!-- Left Reddit-Style Upvote / Downvote Priority Column -->
@@ -312,10 +325,10 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                         <h3>
                             ${escapeHtml(caseData.patientName)}
                             <span class="demog-pill">${escapeHtml(caseData.patientAge)}y • ${escapeHtml(caseData.patientGender)}</span>
-                            <span class="status-pill status-${(caseData.status \vert{}\vert{} 'PENDING_REVIEW').toLowerCase()}">${escapeHtml((caseData.status || 'PENDING_REVIEW').replace(/_/g, ' '))}</span>
+                            <span class="status-pill status-${(caseData.status || 'PENDING_REVIEW').toLowerCase()}">${escapeHtml((caseData.status || 'PENDING_REVIEW').replace(/_/g, ' '))}</span>
                         </h3>
                         <div class="patient-meta">
-                            Case <strong>#${escapeHtml(caseData.id)}</strong> \vert{} Clinic: <strong>${escapeHtml(caseData.clinicCode)}</strong> |
+                            Case <strong>#${escapeHtml(caseData.id)}</strong> | Clinic: <strong>${escapeHtml(caseData.clinicCode)}</strong> |
                             Submitted: ${new Date(caseData.timestamp).toLocaleString()} |
                             Dept: <strong>${escapeHtml(t.suggestedDepartment || 'General Medicine')}</strong>
                         </div>
@@ -476,7 +489,7 @@ async function swapOrderWithinTier(movingCase, neighborCase, direction, forcedNe
     };
 
     await Promise.all([
-        fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${movingCase.id}.json`, {
+        fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${movingCase.id}.json`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -485,7 +498,7 @@ async function swapOrderWithinTier(movingCase, neighborCase, direction, forcedNe
                 auditLog
             })
         }),
-        fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${neighborCase.id}.json`, {
+        fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${neighborCase.id}.json`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -535,7 +548,7 @@ window.handleDirectPrioritySelect = async function(caseId, newPriority) {
     if (oldPriority === newPriority) return;
 
     if (oldPriority === 'CRITICAL' && (newPriority === 'URGENT' || newPriority === 'ROUTINE')) {
-        const ok = confirm(`CONFIRM DOWNGRADE:\nCase #${caseId} (${caseData.patientName}) is currently marked CRITICAL.\nAre you sure you want to downgrade its priority rating to${newPriority}?`);
+        const ok = confirm(`CONFIRM DOWNGRADE:\nCase #${caseId} (${caseData.patientName}) is currently marked CRITICAL.\nAre you sure you want to downgrade its priority rating to ${newPriority}?`);
         if (!ok) {
             fetchCloudQueue();
             return;
@@ -548,10 +561,10 @@ window.handleDirectPrioritySelect = async function(caseId, newPriority) {
     auditLog.push({
         timestamp: nowIso,
         actor: docActor,
-        action: `Changed case priority from ${oldPriority} →${newPriority}.`
+        action: `Changed case priority from ${oldPriority} → ${newPriority}.`
     });
 
-    await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
+    await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -601,7 +614,7 @@ window.sendDoctorChatMessage = async function(caseId) {
     });
 
     try {
-        await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
+        await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ messages, auditLog })
@@ -632,7 +645,7 @@ window.approveAndSend = async function(caseId) {
     });
 
     try {
-        await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
+        await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -673,7 +686,7 @@ window.requestPatientClosure = async function(caseId) {
         action: 'Requested patient confirmation to close/dissolve case upon recovery.'
     });
 
-    await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
+    await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -700,7 +713,7 @@ window.dissolveCaseDirectly = async function(caseId) {
         id: 'MSG-' + Date.now(),
         senderRole: 'system',
         senderName: 'CareFlow System',
-        text: `Case #${caseId} was marked as resolved and dissolved by${docName}.`,
+        text: `Case #${caseId} was marked as resolved and dissolved by ${docName}.`,
         timestamp: nowIso
     });
 
@@ -711,7 +724,7 @@ window.dissolveCaseDirectly = async function(caseId) {
         action: 'Dissolved/closed case directly.'
     });
 
-    await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
+    await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -731,9 +744,9 @@ window.purgeRecord = async function(caseId) {
     }
 
     try {
-        await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, { method: 'DELETE' });
+        await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, { method: 'DELETE' });
         if (caseData && caseData.patientUserId) {
-            await fetch(`${FIREBASE_URL}/patients/${caseData.patientUserId}/cases/${caseId}.json`, { method: 'DELETE' });
+            await fbFetch(`${FIREBASE_URL}/patients/${caseData.patientUserId}/cases/${caseId}.json`, { method: 'DELETE' });
         }
         await fetchCloudQueue();
     } catch (err) {
@@ -757,9 +770,9 @@ window.openParamedicDispatchModal = function(caseId) {
         <div class="paramedic-packet-box">
             <div><strong>Patient Name:</strong> ${escapeHtml(caseData.patientName)} (${escapeHtml(caseData.patientAge)}y / ${escapeHtml(caseData.patientGender)})</div>
             <div><strong>Case ID &amp; Clinic:</strong> #${escapeHtml(caseData.id)} • Clinic ${escapeHtml(caseData.clinicCode)}</div>
-            <div><strong>AI Triage Category:</strong> ${escapeHtml(t.priority \vert{}\vert{} 'CRITICAL')} (${escapeHtml(t.suggestedDepartment || 'Emergency')})</div>
+            <div><strong>AI Triage Category:</strong> ${escapeHtml(t.priority || 'CRITICAL')} (${escapeHtml(t.suggestedDepartment || 'Emergency')})</div>
             <div><strong>Primary Symptoms:</strong> ${escapeHtml((t.standardizedSymptoms || [caseData.symptomsText]).join(', '))}</div>
-            <div><strong>Extracted Vitals:</strong> Temp: ${escapeHtml(v.temperature \vert{}\vert{} 'N/A')} \vert{} HR:${escapeHtml(v.heart_rate || 'N/A')} | BP: ${escapeHtml(v.blood_pressure \vert{}\vert{} 'N/A')} \vert{} SpO₂:${escapeHtml(v.spo2 || 'N/A')}</div>
+            <div><strong>Extracted Vitals:</strong> Temp: ${escapeHtml(v.temperature || 'N/A')} | HR: ${escapeHtml(v.heart_rate || 'N/A')} | BP: ${escapeHtml(v.blood_pressure || 'N/A')} | SpO₂: ${escapeHtml(v.spo2 || 'N/A')}</div>
             <div style="margin-top:8px;">
                 <label for="paramedicNotesInput" style="font-weight:700; display:block; margin-bottom:4px;">Emergency Dispatch Instructions for Paramedics:</label>
                 <input type="text" id="paramedicNotesInput" value="Suspected acute cardiorespiratory/medical emergency (e.g. chest pain / breathlessness). Dispatch ALS ambulance immediately with O2 & ECG monitor." style="width:100%; padding:8px; border:1px solid #fca5a5; border-radius:6px; box-sizing:border-box;">
@@ -803,7 +816,7 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
         action: `Marked case as EMERGENCY and dispatched Hospital Paramedic Team (Ref: ${dispatchId}).`
     });
 
-    await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseData.id}.json`, {
+    await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseData.id}.json`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -818,7 +831,7 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
     const banner = document.getElementById('paramedicDispatchConfirmationBanner');
     if (banner) {
         banner.style.display = 'block';
-        banner.innerHTML = `✅ <strong>Patient Details Forwarded to Hospital Paramedic Team!</strong><br>Dispatch ID: <strong>${dispatchId}</strong> | Authorized by: <strong>${escapeHtml(docName)}</strong> at${nowTime}.`;
+        banner.innerHTML = `✅ <strong>Patient Details Forwarded to Hospital Paramedic Team!</strong><br>Dispatch ID: <strong>${dispatchId}</strong> | Authorized by: <strong>${escapeHtml(docName)}</strong> at ${nowTime}.`;
     }
     confirmParamedicDispatchBtn.style.display = 'none';
     await fetchCloudQueue();
@@ -832,3 +845,11 @@ closeParamedicModalBtn.addEventListener('click', () => {
 // Initialize on load
 initDoctorProfileBar();
 fetchCloudQueue();
+
+// Auto-refresh the queue so new patient submissions appear live (skipped while the doctor is typing/editing)
+setInterval(() => {
+    const modalOpen = priorityConfirmModal.style.display !== 'none' || paramedicModal.style.display !== 'none';
+    const typing = Array.from(document.querySelectorAll('.chat-input-row input')).some(i => i.value || i === document.activeElement);
+    const editing = Array.from(document.querySelectorAll('.referral-note-box textarea')).some(t => t.value !== t.defaultValue || t === document.activeElement);
+    if (!modalOpen && !typing && !editing && !document.hidden) fetchCloudQueue(true);
+}, 10000);

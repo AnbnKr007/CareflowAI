@@ -1,6 +1,19 @@
 // Firebase Realtime Database URL (without trailing slash)
 const FIREBASE_URL = "https://careflowai-2bd8b-default-rtdb.firebaseio.com";
 
+// Firebase fetch wrapper: fetch() does NOT throw on 401/403, so a locked-down DB
+// would silently "succeed". This makes permission/network failures visible.
+async function fbFetch(url, opts) {
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+        throw new Error(res.status === 401 || res.status === 403
+            ? `Firebase rejected the request (${res.status}). Open Firebase Console > Realtime Database > Rules and allow read/write.`
+            : `Firebase error ${res.status}`);
+    }
+    return res;
+}
+function cleanClinicCode(v) { return String(v || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''); }
+
 // Cookie Helpers
 function setCookie(name, value, days = 30) {
     const d = new Date();
@@ -223,7 +236,7 @@ function buildClientFallbackTriage(payload) {
 patientForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    if (!symptomsText.value.trim() && !audioBase64 && !imageBase64) {
+    if (!document.getElementById('symptomsText').value.trim() && !audioBase64 && !imageBase64) {
         alert("Please provide at least one input: symptom text, a voice recording, or a medical report image.");
         return;
     }
@@ -232,7 +245,7 @@ patientForm.addEventListener('submit', async (e) => {
     submitBtn.disabled = true;
     submitBtn.textContent = "⏳ Running Multimodal AI Triage...";
 
-    const clinicCode = document.getElementById('clinicCode').value.trim().toUpperCase();
+    const clinicCode = cleanClinicCode(document.getElementById('clinicCode').value);
     const patientName = document.getElementById('patientName').value.trim();
     const patientAge = document.getElementById('patientAge').value;
     const patientGender = document.getElementById('patientGender').value;
@@ -333,14 +346,14 @@ patientForm.addEventListener('submit', async (e) => {
         };
 
         // 1. Save to Clinic Queue in Firebase
-        await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
+        await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(fullCaseRecord)
         });
 
         // 2. Save index reference under Patient's User ID in Firebase for cross-device listing
-        await fetch(`${FIREBASE_URL}/patients/${currentUser.userId}/cases/${caseId}.json`, {
+        await fbFetch(`${FIREBASE_URL}/patients/${currentUser.userId}/cases/${caseId}.json`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ clinicCode, caseId, timestamp: nowIso })
@@ -377,8 +390,8 @@ patientForm.addEventListener('submit', async (e) => {
 });
 
 // Load All Cases for the Logged-in Patient, Grouped & Sorted by Clinic
-async function loadPatientCasesByClinic() {
-    myCasesByClinicContainer.innerHTML = '<p class="text-muted">Syncing your cases across clinics...</p>';
+async function loadPatientCasesByClinic(silent = false) {
+    if (!silent) myCasesByClinicContainer.innerHTML = '<p class="text-muted">Syncing your cases across clinics...</p>';
 
     try {
         // Merge cookie knownCases + Firebase /patients/{userId}/cases
@@ -390,7 +403,7 @@ async function loadPatientCasesByClinic() {
         });
 
         try {
-            const idxRes = await fetch(`${FIREBASE_URL}/patients/${currentUser.userId}/cases.json`);
+            const idxRes = await fbFetch(`${FIREBASE_URL}/patients/${currentUser.userId}/cases.json`);
             const idxData = await idxRes.json();
             if (idxData) {
                 Object.values(idxData).forEach(item => {
@@ -415,7 +428,7 @@ async function loadPatientCasesByClinic() {
         // Fetch live details for each case
         const fetchedCases = await Promise.all(refs.map(async ({ clinicCode, caseId }) => {
             try {
-                const r = await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`);
+                const r = await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`);
                 const data = await r.json();
                 return data || null;
             } catch (e) {
@@ -510,7 +523,7 @@ function renderPatientCaseCard(caseData) {
             <div class="doctor-rx-box">
                 <strong>🩺 Doctor's Official Triage / Referral Note:</strong>
                 <p>${escapeHtml(caseData.doctorNote)}</p>
-                <small>Reviewed by ${escapeHtml(caseData.reviewedBy \vert{}\vert{} 'Clinician')} at${escapeHtml(caseData.reviewedAt || '')}</small>
+                <small>Reviewed by ${escapeHtml(caseData.reviewedBy || 'Clinician')} at ${escapeHtml(caseData.reviewedAt || '')}</small>
             </div>
         ` : ''}
 
@@ -570,7 +583,7 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
     sendBtn.textContent = "AI Analysing...";
 
     try {
-        const res = await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`);
+        const res = await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`);
         const caseData = await res.json();
         if (!caseData) throw new Error("Case record no longer exists.");
 
@@ -635,7 +648,14 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
         }
 
         const oldPriority = caseData.triage?.priority || 'ROUTINE';
-        const newPriority = chatAiResult.updatedPriority || oldPriority;
+        let newPriority = chatAiResult.updatedPriority || oldPriority;
+        const prioW = { CRITICAL: 3, URGENT: 2, ROUTINE: 1 };
+        let deescalationNote = '';
+        if ((prioW[newPriority] || 1) < (prioW[oldPriority] || 1)) {
+            // Safety: AI can escalate on its own, but lowering priority needs a clinician's confirmation
+            deescalationNote = ` AI suggests lowering priority to ${newPriority} - awaiting doctor confirmation.`;
+            newPriority = oldPriority;
+        }
         const priorityRankMap = { CRITICAL: 300, URGENT: 200, ROUTINE: 100 };
 
         const updatedTriage = {
@@ -674,15 +694,16 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             });
         }
 
+        if (deescalationNote) auditLog.push({ timestamp: nowIso, actor: 'CareFlow AI Re-Triage', action: deescalationNote.trim() });
         const newQueueScore = (priorityRankMap[newPriority] || 100) + (caseData.manualOrderOffset || 0);
 
-        await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
+        await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 messages,
                 triage: updatedTriage,
-                chatAiSummary: chatAiResult.chatSummary || `Patient update: ${text}`,
+                chatAiSummary: (chatAiResult.chatSummary || `Patient update: ${text}`) + deescalationNote,
                 queueScore: newQueueScore,
                 auditLog
             })
@@ -701,7 +722,7 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
 // Patient Confirms or Declines Case Closure / Recovery
 window.respondToCaseClosure = async function(clinicCode, caseId, confirmClose) {
     try {
-        const res = await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`);
+        const res = await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`);
         const caseData = await res.json();
         if (!caseData) return;
 
@@ -722,7 +743,7 @@ window.respondToCaseClosure = async function(clinicCode, caseId, confirmClose) {
                 actor: `Patient (${caseData.patientName})`,
                 action: 'Confirmed recovery and closed/dissolved the case.'
             });
-            await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
+            await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -744,7 +765,7 @@ window.respondToCaseClosure = async function(clinicCode, caseId, confirmClose) {
                 actor: `Patient (${caseData.patientName})`,
                 action: 'Declined closure request; symptoms still present.'
             });
-            await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
+            await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -768,8 +789,8 @@ window.withdrawPatientCase = async function(clinicCode, caseId) {
     }
 
     try {
-        await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, { method: 'DELETE' });
-        await fetch(`${FIREBASE_URL}/patients/${currentUser.userId}/cases/${caseId}.json`, { method: 'DELETE' });
+        await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, { method: 'DELETE' });
+        await fbFetch(`${FIREBASE_URL}/patients/${currentUser.userId}/cases/${caseId}.json`, { method: 'DELETE' });
 
         currentUser.knownCases = (currentUser.knownCases || []).filter(c => !(c.caseId === caseId && c.clinicCode === clinicCode));
         setCookie('careflow_user', currentUser, 30);
@@ -782,7 +803,7 @@ window.withdrawPatientCase = async function(clinicCode, caseId) {
 
 // Manual Lookup by Clinic + Case ID (also links it to patient's cookie dashboard)
 document.getElementById('trackBtn').addEventListener('click', async () => {
-    const clinic = document.getElementById('trackClinicCode').value.trim().toUpperCase();
+    const clinic = cleanClinicCode(document.getElementById('trackClinicCode').value);
     const caseId = document.getElementById('trackCaseId').value.trim().toUpperCase();
     const resultBox = document.getElementById('trackingResult');
 
@@ -795,7 +816,7 @@ document.getElementById('trackBtn').addEventListener('click', async () => {
     resultBox.innerHTML = '<span class="text-muted">Searching hospital cloud...</span>';
 
     try {
-        const res = await fetch(`${FIREBASE_URL}/clinics/${clinic}/cases/${caseId}.json`);
+        const res = await fbFetch(`${FIREBASE_URL}/clinics/${clinic}/cases/${caseId}.json`);
         const caseData = await res.json();
 
         if (!caseData) {
@@ -816,8 +837,14 @@ document.getElementById('trackBtn').addEventListener('click', async () => {
     }
 });
 
-refreshMyCasesBtn.addEventListener('click', loadPatientCasesByClinic);
+refreshMyCasesBtn.addEventListener('click', () => loadPatientCasesByClinic());
 
 // Initialize on page load
 initPatientSessionUI();
 loadPatientCasesByClinic();
+
+// Auto-refresh so doctor replies appear without clicking Refresh (skipped while the patient is typing)
+setInterval(() => {
+    const typing = Array.from(document.querySelectorAll('.chat-input-row input')).some(i => i.value || i === document.activeElement);
+    if (!typing && !document.hidden) loadPatientCasesByClinic(true);
+}, 15000);
