@@ -3,50 +3,128 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Doctor Dashboard - CareFlow AI</title>
+    <title>Clinician Triage Dashboard — CareFlow AI</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="portal-body">
-    <div class="nav-header">
-        <a href="index.html" class="back-link">← Back to Home</a>
-        <span class="badge" style="background: #dbeafe; color: #1e40af;">Doctor Dashboard</span>
-    </div>
+    <!-- Top Clinician Bar -->
+    <header class="portal-topbar">
+        <div class="topbar-left">
+            <a href="index.html" class="back-link">← Home</a>
+            <span class="badge badge-doctor">🩺 Clinician Triage Console</span>
+        </div>
+        <div id="doctorGreetingHeader" class="topbar-right">
+            <!-- Populated from Cookie -->
+        </div>
+    </header>
 
-    <!-- Login & Filter Section -->
-    <div class="form-card" id="loginSection">
-        <h2>Clinic Login & Routing</h2>
-        <form id="doctorLoginForm">
-            <div class="form-row">
-                <div class="form-group half">
-                    <label for="docClinicCode">Clinic / Hospital Code *</label>
-                    <input type="text" id="docClinicCode" placeholder="e.g. CARE-101" required>
-                </div>
-                <div class="form-group half">
-                    <label for="docDepartment">Your Department *</label>
-                    <select id="docDepartment" required>
-                        <option value="All">All Departments</option>
-                        <option value="General Medicine">General Medicine</option>
-                        <option value="Cardiology">Cardiology</option>
-                        <option value="Pulmonology">Pulmonology</option>
-                        <option value="Orthopedics">Orthopedics</option>
+    <!-- Clinic & Department Switcher Bar -->
+    <section class="clinic-control-bar">
+        <form id="doctorFilterForm" class="clinic-switcher-form">
+            <div class="switcher-item">
+                <label for="docNameInput">Attending Clinician</label>
+                <input type="text" id="docNameInput" placeholder="Dr. Ananya Sharma" required>
+            </div>
+
+            <div class="switcher-item">
+                <label for="docClinicCode">Active Clinic Code</label>
+                <div style="display:flex; gap:6px;">
+                    <input type="text" id="docClinicCode" placeholder="e.g. CARE-101" value="CARE-101" required style="width: 130px;">
+                    <select id="quickClinicSelect" title="Quick Switch Clinic" style="width: 135px;">
+                        <option value="">Switch Clinic...</option>
+                        <option value="CARE-101">CARE-101 (Main)</option>
+                        <option value="CITY-202">CITY-202 (Metro)</option>
+                        <option value="METRO-303">METRO-303 (Trauma)</option>
+                        <option value="AIIMS-DEL">AIIMS-DEL</option>
                     </select>
                 </div>
             </div>
-            <button type="submit" class="primary-btn">Access Patient Queue</button>
-        </form>
-    </div>
 
-    <!-- Dashboard Section (Hidden until login) -->
-    <main id="dashboardSection" style="display: none; max-width: 900px; margin: 20px auto;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h2 id="dashboardTitle">Active Cases</h2>
-            <button id="logoutBtn" class="stop-btn">Log Out</button>
-        </div>
-        
+            <div class="switcher-item">
+                <label for="docDepartment">Department Filter (14 Specialties)</label>
+                <select id="docDepartment">
+                    <option value="All">All Departments (Priority Order)</option>
+                    <option value="Emergency & Trauma">Emergency &amp; Trauma</option>
+                    <option value="General Medicine">General Medicine</option>
+                    <option value="Cardiology">Cardiology</option>
+                    <option value="Pulmonology">Pulmonology</option>
+                    <option value="Neurology">Neurology</option>
+                    <option value="Orthopedics">Orthopedics</option>
+                    <option value="Pediatrics">Pediatrics</option>
+                    <option value="Gastroenterology">Gastroenterology</option>
+                    <option value="Dermatology">Dermatology</option>
+                    <option value="Psychiatry">Psychiatry</option>
+                    <option value="Obstetrics & Gynecology">Obstetrics &amp; Gynecology (OB-GYN)</option>
+                    <option value="ENT">ENT (Otolaryngology)</option>
+                    <option value="Nephrology">Nephrology</option>
+                    <option value="Oncology">Oncology</option>
+                </select>
+            </div>
+
+            <div class="switcher-item">
+                <label for="docStatusFilter">Case Status</label>
+                <select id="docStatusFilter">
+                    <option value="ACTIVE">Active Queue (Pending, Approved &amp; Emergency)</option>
+                    <option value="ALL">All Cases (Including Dissolved)</option>
+                    <option value="PENDING_REVIEW">Pending Initial Review Only</option>
+                    <option value="EMERGENCY_DISPATCHED">Emergency Dispatched Only</option>
+                    <option value="DISSOLVED">Dissolved / Closed Only</option>
+                </select>
+            </div>
+
+            <div class="switcher-actions">
+                <button type="submit" class="primary-btn">Load Queue</button>
+                <button type="button" id="refreshQueueBtn" class="override-btn">↻ Sync</button>
+            </div>
+        </form>
+    </section>
+
+    <!-- Queue Metrics Bar -->
+    <section class="queue-stats-bar" id="queueStatsBar">
+        <div class="stat-pill stat-critical">🔴 Critical: <strong id="countCritical">0</strong></div>
+        <div class="stat-pill stat-urgent">🟠 Urgent: <strong id="countUrgent">0</strong></div>
+        <div class="stat-pill stat-routine">🟢 Routine: <strong id="countRoutine">0</strong></div>
+        <div class="stat-pill stat-total">📋 Total Shown: <strong id="countTotal">0</strong></div>
+    </section>
+
+    <!-- Main Prioritized Triage Queue -->
+    <main class="doctor-main-container">
         <div id="triageQueue" class="triage-grid">
-            <!-- Triage Cards will be injected here via JavaScript -->
+            <!-- Dynamically populated by doctor.js -->
         </div>
     </main>
+
+    <!-- Modal 1: Priority Downgrade Confirmation Modal (Reddit-style Arrow Guardrail) -->
+    <div id="priorityConfirmModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header warning-header">
+                <h3>⚠️ Confirm Priority Reclassification</h3>
+            </div>
+            <div class="modal-body" id="priorityConfirmBody">
+                <!-- Populated dynamically -->
+            </div>
+            <div class="modal-actions">
+                <button type="button" id="confirmPriorityChangeBtn" class="approve-btn">Confirm &amp; Change Priority</button>
+                <button type="button" id="cancelPriorityChangeBtn" class="override-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal 2: Emergency Paramedic Team Dispatch Popup -->
+    <div id="paramedicModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card paramedic-modal-card">
+            <div class="modal-header emergency-header">
+                <h3>🚨 Hospital Paramedic Rapid Response Dispatch</h3>
+            </div>
+            <div class="modal-body" id="paramedicModalBody">
+                <!-- Populated dynamically with patient details -->
+            </div>
+            <div class="modal-actions">
+                <button type="button" id="confirmParamedicDispatchBtn" class="emergency-btn">🚑 Transmit Patient Packet to Paramedic Unit</button>
+                <button type="button" id="closeParamedicModalBtn" class="override-btn">Close</button>
+            </div>
+        </div>
+    </div>
 
     <script src="doctor.js"></script>
 </body>
