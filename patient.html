@@ -3,98 +3,153 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Patient Intake - CareFlow AI</title>
+    <title>Patient Portal — CareFlow AI</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="portal-body">
-    <div class="nav-header">
-        <a href="index.html" class="back-link">← Back to Home</a>
-        <span class="badge">Patient Portal</span>
-    </div>
-
-    <!-- 1. Track Existing Case Section -->
-    <div class="form-card" style="margin-bottom: 25px; border-left: 4px solid #3b82f6;">
-        <h3>Track Existing Case</h3>
-        <p class="subtitle" style="margin-bottom: 15px;">Check doctor updates and clinical recommendations.</p>
-        <div class="form-row">
-            <div class="form-group half">
-                <input type="text" id="trackClinicCode" placeholder="Clinic Code (e.g. CARE-101)">
-            </div>
-            <div class="form-group half">
-                <input type="text" id="trackCaseId" placeholder="Case ID (e.g. PAT-4821)">
-            </div>
+    <!-- Top Navigation -->
+    <header class="portal-topbar">
+        <div class="topbar-left">
+            <a href="index.html" class="back-link">← Home</a>
+            <span class="badge badge-patient">🧑 Patient Portal</span>
         </div>
-        <button type="button" id="trackBtn" class="override-btn" style="width: 100%; font-weight: bold;">Check Status</button>
-        
-        <div id="trackingResult" style="display: none; margin-top: 15px; padding: 15px; background: #f8fafc; border-radius: 8px;"></div>
+        <div id="patientGreetingHeader" class="topbar-right">
+            <!-- Populated from Cookie -->
+        </div>
+    </header>
+
+    <div class="portal-layout">
+        <!-- Left Column: New Multimodal Triage Intake -->
+        <section class="portal-col-main">
+            <div class="form-card">
+                <div class="card-title-row">
+                    <h2>New Multimodal Symptom Intake</h2>
+                    <span class="lang-pill">🌐 English • हिंदी • Hinglish • Regional</span>
+                </div>
+                <p class="subtitle">
+                    Share your symptoms via text, voice recording, or medical report photo. Our AI structures your timeline for a doctor—it does <strong>not</strong> make a final diagnosis.
+                </p>
+
+                <form id="patientForm">
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label for="clinicCode">Clinic / Hospital Code *</label>
+                            <div class="input-with-chips">
+                                <input type="text" id="clinicCode" placeholder="e.g. CARE-101" value="CARE-101" required>
+                                <div class="quick-chips">
+                                    <button type="button" class="chip-btn" onclick="setClinicInput('CARE-101')">CARE-101</button>
+                                    <button type="button" class="chip-btn" onclick="setClinicInput('CITY-202')">CITY-202</button>
+                                    <button type="button" class="chip-btn" onclick="setClinicInput('METRO-303')">METRO-303</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group half">
+                            <label for="symptomOnset">When did symptoms start &amp; how have they changed?</label>
+                            <input type="text" id="symptomOnset" placeholder="e.g. Started 2 days ago, worsened since last night">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label for="patientName">Full Name *</label>
+                            <input type="text" id="patientName" placeholder="e.g. Ramesh Kumar" required>
+                        </div>
+                        <div class="form-group quarter">
+                            <label for="patientAge">Age *</label>
+                            <input type="number" id="patientAge" placeholder="32" min="1" max="120" required>
+                        </div>
+                        <div class="form-group quarter">
+                            <label for="patientGender">Gender *</label>
+                            <select id="patientGender" required>
+                                <option value="">Select</option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="symptomsText">Describe Your Symptoms (English, Hindi, Hinglish, Tamil, Bengali, etc.)</label>
+                        <textarea id="symptomsText" rows="4" placeholder="Example: Kal raat se tez bukhar hai (102F), chest me bharipan aur saans lene me dikkat ho rahi hai..."></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <!-- Voice Input -->
+                        <div class="form-group half media-box">
+                            <label>🎙️ Voice Note (Optional)</label>
+                            <p class="media-hint">Speak naturally in your preferred language.</p>
+                            <div class="voice-controls">
+                                <button type="button" id="recordBtn" class="record-btn">🎤 Record</button>
+                                <button type="button" id="stopRecordBtn" class="stop-btn" disabled>⏹ Stop</button>
+                                <button type="button" id="clearAudioBtn" class="ghost-btn sm-btn" style="display:none;">✕ Clear</button>
+                            </div>
+                            <span id="recordingStatus" class="recording-status">Idle</span>
+                            <audio id="audioPreview" controls style="display: none; width: 100%; margin-top: 8px;"></audio>
+                        </div>
+
+                        <!-- Medical Report OCR Input -->
+                        <div class="form-group half media-box">
+                            <label for="reportImage">📄 Medical Report / Prescription Photo (OCR)</label>
+                            <p class="media-hint">Upload lab results, vitals sheet, or old prescriptions.</p>
+                            <input type="file" id="reportImage" accept="image/*">
+                            <div id="imagePreviewContainer" style="display: none; margin-top: 10px; position: relative;">
+                                <img id="imagePreview" alt="Report Preview" style="max-height: 110px; border-radius: 6px; border: 1px solid #cbd5e1;">
+                                <button type="button" id="clearImageBtn" class="ghost-btn sm-btn" style="display:block; margin-top:4px;">✕ Remove Image</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group consent-box">
+                        <label class="checkbox-container">
+                            <input type="checkbox" id="patientConsent" required>
+                            <span>
+                                <strong>Informed Patient Consent:</strong> I consent to having my symptoms, audio, and uploaded reports processed by CareFlow AI to assist qualified healthcare professionals. I understand this system does <strong>not</strong> diagnose diseases and I can withdraw/delete my data at any time.
+                            </span>
+                        </label>
+                    </div>
+
+                    <button type="submit" id="submitBtn" class="primary-btn submit-btn">Submit for Clinical Triage Review</button>
+                </form>
+
+                <div id="statusMessage" class="status-banner" style="display: none;"></div>
+            </div>
+        </section>
+
+        <!-- Right Column: Patient Dashboard (All Submitted Cases Sorted by Clinic + Manual Lookup) -->
+        <aside class="portal-col-side">
+            <!-- My Cases Grouped by Clinic -->
+            <div class="form-card" style="margin-bottom: 20px;">
+                <div class="card-title-row">
+                    <div>
+                        <h3 id="myCasesHeader" style="margin:0;">My Submitted Cases</h3>
+                        <p class="subtitle" style="margin: 4px 0 0 0; font-size: 0.85rem;">Sorted by Clinic • Live chat &amp; updates from your doctor</p>
+                    </div>
+                    <button type="button" id="refreshMyCasesBtn" class="override-btn sm-btn">↻ Refresh</button>
+                </div>
+
+                <div id="myCasesByClinicContainer" style="margin-top: 15px;">
+                    <p class="text-muted">Loading your cases...</p>
+                </div>
+            </div>
+
+            <!-- Lookup Any Case by Clinic + Case ID -->
+            <div class="form-card" style="border-left: 4px solid #3b82f6;">
+                <h3 style="margin-top:0;">Track Specific Case by ID</h3>
+                <p class="subtitle" style="margin-bottom: 12px; font-size: 0.85rem;">Look up a case from another device using Clinic Code &amp; Case ID.</p>
+                <div class="form-row">
+                    <div class="form-group half" style="margin-bottom: 10px;">
+                        <input type="text" id="trackClinicCode" placeholder="Clinic (e.g. CARE-101)">
+                    </div>
+                    <div class="form-group half" style="margin-bottom: 10px;">
+                        <input type="text" id="trackCaseId" placeholder="Case ID (e.g. PAT-4821)">
+                    </div>
+                </div>
+                <button type="button" id="trackBtn" class="override-btn full-width" style="font-weight: 600;">🔍 Find &amp; Link Case</button>
+                <div id="trackingResult" style="display: none; margin-top: 15px;"></div>
+            </div>
+        </aside>
     </div>
-
-    <!-- 2. New Intake Form -->
-    <main class="form-card">
-        <h2>New Patient Intake Form</h2>
-        <p class="subtitle">Submit symptoms via text, voice, or report image for clinical review.</p>
-
-        <form id="patientForm">
-            <div class="form-group">
-                <label for="clinicCode">Clinic / Hospital Code *</label>
-                <input type="text" id="clinicCode" placeholder="e.g. CARE-101" required>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group half">
-                    <label for="patientName">Full Name *</label>
-                    <input type="text" id="patientName" placeholder="e.g. Ramesh Kumar" required>
-                </div>
-                <div class="form-group quarter">
-                    <label for="patientAge">Age *</label>
-                    <input type="number" id="patientAge" placeholder="32" min="1" max="120" required>
-                </div>
-                <div class="form-group quarter">
-                    <label for="patientGender">Gender *</label>
-                    <select id="patientGender" required>
-                        <option value="">Select</option>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                        <option value="Other">Other</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="symptomsText">Describe Your Symptoms (English, Hindi, or Hinglish)</label>
-                <textarea id="symptomsText" rows="4" placeholder="Kal raat se bukhar hai aur saans lene me dikkat ho rahi hai..."></textarea>
-            </div>
-
-            <div class="form-group media-box">
-                <label>Voice Recording (Optional)</label>
-                <div class="voice-controls">
-                    <button type="button" id="recordBtn" class="record-btn">🎤 Record Voice</button>
-                    <button type="button" id="stopRecordBtn" class="stop-btn" disabled>⏹ Stop</button>
-                    <span id="recordingStatus" class="recording-status">Idle</span>
-                </div>
-                <audio id="audioPreview" controls style="display: none; width: 100%; margin-top: 10px;"></audio>
-            </div>
-
-            <div class="form-group media-box">
-                <label for="reportImage">Attach Medical Report / Prescription Photo (Optional)</label>
-                <input type="file" id="reportImage" accept="image/*">
-                <div id="imagePreviewContainer" style="display: none; margin-top: 10px;">
-                    <img id="imagePreview" alt="Report Preview" style="max-height: 140px; border-radius: 6px;">
-                </div>
-            </div>
-
-            <div class="form-group consent-box">
-                <label class="checkbox-container">
-                    <input type="checkbox" id="patientConsent" required>
-                    <span>I consent to having my symptoms summarized by AI for review by qualified healthcare professionals. I understand this is not a final diagnosis[cite: 4].</span>
-                </label>
-            </div>
-
-            <button type="submit" id="submitBtn" class="primary-btn submit-btn">Submit for Triage Review</button>
-        </form>
-
-        <div id="statusMessage" class="status-banner" style="display: none;"></div>
-    </main>
 
     <script src="patient.js"></script>
 </body>
