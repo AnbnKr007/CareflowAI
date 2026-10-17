@@ -1,22 +1,27 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 export default async function handler(req, res) {
-    // 1. CORS headers to permit requests from your frontend
+    // 1. Set CORS Headers (Allows your browser frontend to talk to this Vercel backend)
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
+    // Handle preflight OPTIONS request
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
+    // Reject non-POST requests
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
+    // Retrieve the API Key from Vercel Environment Variables
+    const API_KEY = process.env.GEMINI_API_KEY;
+    if (!API_KEY) {
+        return res.status(500).json({ error: "Missing GEMINI_API_KEY in Vercel settings." });
+    }
+
     try {
+        // 2. Extract Data from Frontend Request
         const { 
             clinicCode, 
             patientName, 
@@ -27,18 +32,7 @@ export default async function handler(req, res) {
             imageBase64 
         } = req.body;
 
-        // 2. Initialize the SLM (Sub-20B tier for efficiency scoring)
-        const model = genAI.getGenerativeModel({ 
-            model: 'gemini-3.5-flash-lite',
-            generationConfig: {
-                responseMimeType: "application/json",
-                temperature: 0.1 
-            }
-        });
-
-        // 3. Assemble Multimodal Payload
-        const promptParts = [];
-
+        // 3. Define the Strict System Instructions for the AI
         const systemInstruction = `
 You are a medical triage assistant. 
 Your core tasks:
@@ -68,11 +62,9 @@ Return strictly a valid JSON object matching this schema:
 Priority Thresholds:
 - CRITICAL: Chest pain, acute dyspnea, suspected stroke, unresponsiveness, severe hemorrhage.
 - URGENT: High fever (>102°F), suspected fracture, severe localized pain.
-- ROUTINE: Common cold, chronic mild joint ache, rash without systemic symptoms.
-`;
-        promptParts.push(systemInstruction);
+- ROUTINE: Common cold, chronic mild joint ache, rash without systemic symptoms.`;
 
-        // Append text demographic and symptom context
+        // 4. Assemble the Multimodal Content Array
         const patientContext = `
 Patient Record:
 - Clinic: ${clinicCode || 'Unassigned'}
@@ -81,33 +73,65 @@ Patient Record:
 - Gender: ${patientGender || 'Unknown'}
 - Stated Symptoms: "${symptomsText || 'No text entered.'}"
 `;
-        promptParts.push(patientContext);
-
-        // Append base64 audio if present
-        if (audioBase64) {
-            promptParts.push({
-                inlineData: {
-                    data: audioBase64,
-                    mimeType: "audio/webm"
-                }
-            });
-        }
-
-        // Append base64 lab report/image if present
-        if (imageBase64) {
-            promptParts.push({
-                inlineData: {
-                    data: imageBase64,
-                    mimeType: "image/jpeg"
-                }
-            });
-        }
-
-        // 4. Run Multimodal Inference
-        const result = await model.generateContent(promptParts);
-        const responseText = result.response.text();
         
-        const triagedData = JSON.parse(responseText);
+        // Start with the text inputs
+        const parts = [{ text: patientContext }];
+
+        // Add Audio (Voice Note) if the frontend sent it
+        if (audioBase64) {
+            parts.push({
+                inline_data: {
+                    mime_type: "audio/webm",
+                    data: audioBase64
+                }
+            });
+        }
+
+        // Add Image (Lab Report) if the frontend sent it
+        if (imageBase64) {
+            parts.push({
+                inline_data: {
+                    mime_type: "image/jpeg",
+                    data: imageBase64
+                }
+            });
+        }
+
+        // 5. Construct the final Payload using pure Native fetch formatting
+        const payload = {
+            system_instruction: {
+                parts: [{ text: systemInstruction }]
+            },
+            contents: [{
+                parts: parts
+            }],
+            generationConfig: {
+                response_mime_type: "application/json", // Forces JSON output
+                temperature: 0.1 // Keeps the AI deterministic and clinical
+            }
+        };
+
+        // 6. Make the Native fetch call directly to Google's REST API (No SDK required)
+        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${API_KEY}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        // 7. Handle API Errors gracefully
+        if (!geminiResponse.ok) {
+            const errorText = await geminiResponse.text();
+            throw new Error(`Google API Error: ${errorText}`);
+        }
+
+        // 8. Parse the JSON response and return it to the frontend
+        const geminiData = await geminiResponse.json();
+        
+        // The AI output is guaranteed to be JSON because of response_mime_type
+        const rawJsonString = geminiData.candidates[0].content.parts[0].text;
+        const triagedData = JSON.parse(rawJsonString);
 
         return res.status(200).json(triagedData);
 
