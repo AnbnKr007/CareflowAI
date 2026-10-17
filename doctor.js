@@ -1,3 +1,6 @@
+// REPLACE THIS WITH YOUR FIREBASE URL (Keep the trailing slash removed)
+const FIREBASE_URL = "https://careflowai-2bd8b-default-rtdb.firebaseio.com/";
+
 const loginSection = document.getElementById('loginSection');
 const dashboardSection = document.getElementById('dashboardSection');
 const doctorLoginForm = document.getElementById('doctorLoginForm');
@@ -8,7 +11,6 @@ const logoutBtn = document.getElementById('logoutBtn');
 let currentClinic = '';
 let currentDepartment = '';
 
-// 1. Handle Doctor Login & Routing
 doctorLoginForm.addEventListener('submit', (e) => {
     e.preventDefault();
     currentClinic = document.getElementById('docClinicCode').value.trim().toUpperCase();
@@ -16,117 +18,154 @@ doctorLoginForm.addEventListener('submit', (e) => {
 
     loginSection.style.display = 'none';
     dashboardSection.style.display = 'block';
-    dashboardTitle.textContent = `Active Cases: ${currentClinic} (${currentDepartment})`;
+    dashboardTitle.textContent = `Active Cloud Queue: ${currentClinic} (${currentDepartment})`;
     
-    renderQueue();
+    fetchCloudQueue();
 });
 
-// 2. Render the Triage Cards
-function renderQueue() {
-    const storageKey = `cases_${currentClinic}`;
-    const allCases = JSON.parse(localStorage.getItem(storageKey) || "[]");
+// Fetch all cases live from Firebase
+async function fetchCloudQueue() {
+    triageQueue.innerHTML = '<p style="text-align:center; color:#64748b;">Syncing with cloud database...</p>';
+
+    try {
+        const response = await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases.json`);
+        const data = await response.json();
+
+        if (!data) {
+            triageQueue.innerHTML = '<p style="text-align:center; color:#64748b;">No active cases found for clinic ' + currentClinic + '.</p>';
+            return;
+        }
+
+        const casesArray = Object.values(data);
+
+        // Filter for matching department and pending status
+        const filteredCases = casesArray.filter(c => {
+            const matchDept = currentDepartment === 'All' || (c.triage.suggestedDepartment && c.triage.suggestedDepartment.includes(currentDepartment));
+            const matchStatus = c.status === 'PENDING_REVIEW';
+            return matchDept && matchStatus;
+        });
+
+        triageQueue.innerHTML = '';
+
+        if (filteredCases.length === 0) {
+            triageQueue.innerHTML = '<p style="text-align:center; color:#64748b;">No pending cases for this department.</p>';
+            return;
+        }
+
+        filteredCases.forEach(caseData => {
+            const t = caseData.triage;
+            const priorityClass = t.priority ? `priority-${t.priority.toLowerCase()}` : 'priority-routine';
+            
+            const symptomsHtml = t.standardizedSymptoms ? t.standardizedSymptoms.map(s => `<li>${s}</li>`).join('') : '<li>None</li>';
+            const questionsHtml = t.followUpQuestions ? t.followUpQuestions.map(q => `<li>${q}</li>`).join('') : '<li>None</li>';
+            
+            let alertHtml = '';
+            if (t.confidenceFlag === false || (t.missingInformation && t.missingInformation.length > 0)) {
+                const missing = t.missingInformation ? t.missingInformation.join(', ') : 'Unclear or conflicting data detected.';
+                alertHtml = `<div class="alert-box">⚠️ <strong>Flag:</strong> ${missing}</div>`;
+            }
+
+            const card = document.createElement('div');
+            card.className = `triage-card ${priorityClass}`;
+            card.innerHTML = `
+                <div class="card-header">
+                    <div class="patient-info">
+                        <h3>${caseData.patientName} (Age: ${caseData.patientAge}, ${caseData.patientGender})</h3>
+                        <div class="patient-meta">Case #${caseData.id} | Submitted: ${new Date(caseData.timestamp).toLocaleTimeString()} | Dept: ${t.suggestedDepartment}</div>
+                    </div>
+                    <div class="priority-badge">${t.priority || 'ROUTINE'}</div>
+                </div>
+                
+                <div class="card-body">
+                    <div class="section-title">Standardized Symptoms</div>
+                    <ul>${symptomsHtml}</ul>
+
+                    <div class="section-title">AI Suggested Follow-ups</div>
+                    <ul>${questionsHtml}</ul>
+
+                    ${alertHtml}
+
+                    <div style="margin-top: 15px;">
+                        <label style="font-weight: 600; font-size: 0.85rem;">Doctor's Response & Instructions for Patient:</label>
+                        <textarea id="doctorNote_${caseData.id}" rows="2" style="width: 100%; box-sizing: border-box; margin-top: 5px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px;" placeholder="e.g. Prescribed Paracetamol 650mg. Advised OPD Room 4 visit..."></textarea>
+                    </div>
+                </div>
+
+                <div class="card-actions" style="margin-top: 15px;">
+                    <button class="approve-btn" onclick="approveAndSend('${caseData.id}')">Approve & Send to Patient</button>
+                    <button class="override-btn" onclick="overridePriority('${caseData.id}')">Override Priority</button>
+                    <button class="delete-btn" onclick="purgeRecord('${caseData.id}')">🗑️ Purge Record</button>
+                </div>
+            `;
+            triageQueue.appendChild(card);
+        });
+
+    } catch (err) {
+        triageQueue.innerHTML = '<p style="color: #ef4444; text-align: center;">Error loading cloud queue: ' + err.message + '</p>';
+    }
+}
+
+// Approve and send instructions back to patient phone
+window.approveAndSend = async function(caseId) {
+    const note = document.getElementById(`doctorNote_${caseId}`).value.trim();
+    const docId = prompt("Enter your Doctor ID / Name for the audit signature:", "Dr. Sharma");
     
-    // Filter cases based on department and pending status
-    const filteredCases = allCases.filter(c => {
-        const matchDept = currentDepartment === 'All' || (c.triage.suggestedDepartment && c.triage.suggestedDepartment.includes(currentDepartment));
-        const matchStatus = c.status === 'PENDING_REVIEW';
-        return matchDept && matchStatus;
-    });
+    if (!docId) return;
 
-    triageQueue.innerHTML = '';
+    try {
+        await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                status: 'APPROVED',
+                doctorNote: note || "Triage validated. Proceed to clinic desk.",
+                reviewedBy: docId,
+                reviewedAt: new Date().toLocaleTimeString()
+            })
+        });
 
-    if (filteredCases.length === 0) {
-        triageQueue.innerHTML = '<p style="text-align:center; color:#64748b;">No pending cases for this department.</p>';
+        alert(`Case #${caseId} approved and synced. Patient can now view this update.`);
+        fetchCloudQueue();
+    } catch (err) {
+        alert("Failed to update cloud: " + err.message);
+    }
+};
+
+// Override Priority
+window.overridePriority = async function(caseId) {
+    const newPriority = prompt("Enter new priority (CRITICAL, URGENT, ROUTINE):").toUpperCase();
+    if (!['CRITICAL', 'URGENT', 'ROUTINE'].includes(newPriority)) {
+        alert("Invalid priority.");
         return;
     }
 
-    filteredCases.forEach(caseData => {
-        const t = caseData.triage;
-        const priorityClass = t.priority ? `priority-${t.priority.toLowerCase()}` : 'priority-routine';
-        
-        // Build Lists safely
-        const symptomsHtml = t.standardizedSymptoms ? t.standardizedSymptoms.map(s => `<li>${s}</li>`).join('') : '<li>No structured symptoms extracted</li>';
-        const questionsHtml = t.followUpQuestions ? t.followUpQuestions.map(q => `<li>${q}</li>`).join('') : '<li>None suggested</li>';
-        
-        // Uncertainty / Missing Info Flag
-        let alertHtml = '';
-        if (t.confidenceFlag === false || (t.missingInformation && t.missingInformation.length > 0)) {
-            const missing = t.missingInformation ? t.missingInformation.join(', ') : 'AI detected conflicting or unclear input.';
-            alertHtml = `<div class="alert-box">⚠️ <strong>Flag:</strong> ${missing}</div>`;
-        }
-
-        const card = document.createElement('div');
-        card.className = `triage-card ${priorityClass}`;
-        card.innerHTML = `
-            <div class="card-header">
-                <div class="card-actions">
-                <button class="approve-btn" onclick="signOffCase('${caseData.id}')">Approve & Sign Off</button>
-                <button class="override-btn" onclick="overridePriority('${caseData.id}')">Override Priority</button>
-                <button class="delete-btn" onclick="purgeRecord('${caseData.id}')">🗑️ Purge Record</button>
-            </div>
-                <div class="priority-badge">${t.priority || 'ROUTINE'}</div>
-            </div>
-            
-            <div class="card-body">
-                <div class="section-title">Standardized Symptoms</div>
-                <ul>${symptomsHtml}</ul>
-
-                <div class="section-title">Suggested Doctor Follow-ups</div>
-                <ul>${questionsHtml}</ul>
-
-                ${alertHtml}
-            </div>
-
-            <div class="card-actions">
-                <button class="approve-btn" onclick="signOffCase('${caseData.id}')">Approve & Sign Off</button>
-                <button class="override-btn" onclick="overridePriority('${caseData.id}')">Override Priority</button>
-            </div>
-        `;
-        triageQueue.appendChild(card);
-    });
-}
-
-// 3. Human-in-the-loop: Approve Case
-window.signOffCase = function(caseId) {
-    const storageKey = `cases_${currentClinic}`;
-    let allCases = JSON.parse(localStorage.getItem(storageKey) || "[]");
-    
-    // Find case and update status
-    const caseIndex = allCases.findIndex(c => c.id === caseId);
-    if (caseIndex > -1) {
-        allCases[caseIndex].status = 'APPROVED';
-        allCases[caseIndex].auditTrail.push({
-            timestamp: new Date().toLocaleTimeString(),
-            action: `Doctor signed off on AI triage.`
+    try {
+        await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}/triage.json`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ priority: newPriority })
         });
-        localStorage.setItem(storageKey, JSON.stringify(allCases));
-        renderQueue(); // Refresh dashboard
+        fetchCloudQueue();
+    } catch (err) {
+        alert("Failed to update priority: " + err.message);
     }
 };
 
-// 4. Human-in-the-loop: Override Priority
-window.overridePriority = function(caseId) {
-    const storageKey = `cases_${currentClinic}`;
-    let allCases = JSON.parse(localStorage.getItem(storageKey) || "[]");
-    
-    const caseIndex = allCases.findIndex(c => c.id === caseId);
-    if (caseIndex > -1) {
-        const newPriority = prompt("Enter new priority (CRITICAL, URGENT, ROUTINE):").toUpperCase();
-        if (['CRITICAL', 'URGENT', 'ROUTINE'].includes(newPriority)) {
-            allCases[caseIndex].triage.priority = newPriority;
-            allCases[caseIndex].auditTrail.push({
-                timestamp: new Date().toLocaleTimeString(),
-                action: `Doctor overrode AI priority to ${newPriority}.`
+// Data Privacy: Purge Record
+window.purgeRecord = async function(caseId) {
+    if (confirm("PRIVACY WARNING: Permanently delete this record from cloud storage?")) {
+        try {
+            await fetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
+                method: 'DELETE'
             });
-            localStorage.setItem(storageKey, JSON.stringify(allCases));
-            renderQueue();
-        } else {
-            alert("Invalid priority entered.");
+            alert(`Record ${caseId} permanently deleted.`);
+            fetchCloudQueue();
+        } catch (err) {
+            alert("Failed to delete record: " + err.message);
         }
     }
 };
 
-// 5. Logout
 logoutBtn.addEventListener('click', () => {
     loginSection.style.display = 'block';
     dashboardSection.style.display = 'none';
@@ -134,23 +173,3 @@ logoutBtn.addEventListener('click', () => {
     currentDepartment = '';
     document.getElementById('docClinicCode').value = '';
 });
-// 6. Data Privacy: Purge Record (Hackathon Constraint)
-window.purgeRecord = function(caseId) {
-    const confirmPurge = confirm("PRIVACY WARNING: Are you sure you want to permanently delete this patient's data? This action cannot be undone.");
-    
-    if (confirmPurge) {
-        const storageKey = `cases_${currentClinic}`;
-        let allCases = JSON.parse(localStorage.getItem(storageKey) || "[]");
-        
-        // Filter out the deleted case to simulate a database wipe
-        allCases = allCases.filter(c => c.id !== caseId);
-        
-        // Save the scrubbed array back to local storage
-        localStorage.setItem(storageKey, JSON.stringify(allCases));
-        
-        // Refresh the dashboard UI
-        renderQueue(); 
-        
-        alert(`Patient record ${caseId} has been permanently purged from the system in compliance with data privacy guidelines.`);
-    }
-};
