@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctor Dashboard - CareFlow AI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="portal-body">
+    <div class="nav-header">
+        <a href="index.html" class="back-link">← Back to Home</a>
+        <span class="badge" style="background: #dbeafe; color: #1e40af;">Doctor Dashboard</span>
+    </div>
+
+    <!-- Login & Filter Section -->
+    <div class="form-card" id="loginSection">
+        <h2>Clinic Login & Routing</h2>
+        <form id="doctorLoginForm">
+            <div class="form-row">
+                <div class="form-group half">
+                    <label for="docClinicCode">Clinic / Hospital Code *</label>
+                    <input type="text" id="docClinicCode" placeholder="e.g. CARE-101" required>
+                </div>
+                <div class="form-group half">
+                    <label for="docDepartment">Your Department *</label>
+                    <select id="docDepartment" required>
+                        <option value="All">All Departments</option>
+                        <option value="General Medicine">General Medicine</option>
+                        <option value="Cardiology">Cardiology</option>
+                        <option value="Pulmonology">Pulmonology</option>
+                        <option value="Orthopedics">Orthopedics</option>
+                    </select>
+                </div>
+            </div>
+            <button type="submit" class="primary-btn">Access Patient Queue</button>
+        </form>
+    </div>
+
+    <!-- Dashboard Section (Hidden until login) -->
+    <main id="dashboardSection" style="display: none; max-width: 900px; margin: 20px auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h2 id="dashboardTitle">Active Cases</h2>
+            <button id="logoutBtn" class="stop-btn">Log Out</button>
+        </div>
+        
+        <div id="triageQueue" class="triage-grid">
+            <!-- Triage Cards will be injected here via JavaScript -->
+        </div>
+    </main>
+
+    <script src="doctor.js"></script>
+</body>
+</html>

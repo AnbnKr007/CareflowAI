@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CareFlow AI - Triage System</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="landing-body">
+    <div class="landing-container">
+        <h1>CareFlow AI</h1>
+        <p>Human-in-the-Loop Healthcare Triage Assistant</p>
+        
+        <div class="role-selection">
+            <!-- Patient Gateway -->
+            <div class="role-card" onclick="window.location.href='patient.html'">
+                <h2>For Patients</h2>
+                <p>Submit your symptoms, medical reports, or voice notes to your clinic securely.</p>
+                <button class="primary-btn">Enter Patient Portal</button>
+            </div>
+
+            <!-- Doctor Gateway -->
+            <div class="role-card" onclick="window.location.href='doctor.html'">
+                <h2>For Healthcare Professionals</h2>
+                <p>Review AI-triaged cases, filter by department, and approve referrals.</p>
+                <button class="secondary-btn">Enter Doctor Dashboard</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

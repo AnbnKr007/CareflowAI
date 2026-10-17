@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patient Intake - CareFlow AI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="portal-body">
+    <div class="nav-header">
+        <a href="index.html" class="back-link">← Back to Home</a>
+        <span class="badge">Patient Portal</span>
+    </div>
+
+    <main class="form-card">
+        <h2>Patient Symptom & Intake Form</h2>
+        <p class="subtitle">Submit your symptoms in English, Hindi, or Hinglish for doctor review.</p>
+
+        <form id="patientForm">
+            <!-- Clinic Access Code -->
+            <div class="form-group">
+                <label for="clinicCode">Clinic / Hospital Code *</label>
+                <input type="text" id="clinicCode" placeholder="e.g. CARE-101 or AIIMS-DEL" required>
+                <small>Enter the code provided by your clinic or hospital desk.</small>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group half">
+                    <label for="patientName">Full Name *</label>
+                    <input type="text" id="patientName" placeholder="e.g. Ramesh Kumar" required>
+                </div>
+                <div class="form-group quarter">
+                    <label for="patientAge">Age *</label>
+                    <input type="number" id="patientAge" placeholder="32" min="1" max="120" required>
+                </div>
+                <div class="form-group quarter">
+                    <label for="patientGender">Gender *</label>
+                    <select id="patientGender" required>
+                        <option value="">Select</option>
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Typed Symptoms -->
+            <div class="form-group">
+                <label for="symptomsText">Describe Your Symptoms (English, Hindi, or Hinglish) *</label>
+                <textarea id="symptomsText" rows="4" placeholder="e.g., Kal raat se bohot tez bukhar hai aur saans lene me thoda heavy lag raha hai..."></textarea>
+            </div>
+
+            <!-- Voice Recording Option -->
+            <div class="form-group media-box">
+                <label>Voice Note (Optional)</label>
+                <div class="voice-controls">
+                    <button type="button" id="recordBtn" class="record-btn">🎤 Record Voice</button>
+                    <button type="button" id="stopRecordBtn" class="stop-btn" disabled>⏹ Stop</button>
+                    <span id="recordingStatus" class="recording-status">Idle</span>
+                </div>
+                <audio id="audioPreview" controls style="display: none; width: 100%; margin-top: 10px;"></audio>
+            </div>
+
+            <!-- Lab Report / Prescription Image Upload -->
+            <div class="form-group media-box">
+                <label for="reportImage">Attach Medical Report / Prescription Photo (Optional)</label>
+                <input type="file" id="reportImage" accept="image/*">
+                <div id="imagePreviewContainer" style="display: none; margin-top: 10px;">
+                    <img id="imagePreview" alt="Report Preview" style="max-height: 140px; border-radius: 6px;">
+                </div>
+            </div>
+
+            <!-- Patient Consent & Privacy Mandate -->
+            <div class="form-group consent-box">
+                <label class="checkbox-container">
+                    <input type="checkbox" id="patientConsent" required>
+                    <span>I consent to having my symptoms and attached reports summarized by AI for review by qualified healthcare professionals. I understand this is not a final medical diagnosis[cite: 4].</span>
+                </label>
+            </div>
+
+            <button type="submit" id="submitBtn" class="primary-btn submit-btn">Submit for Triage Review</button>
+        </form>
+
+        <div id="statusMessage" class="status-banner" style="display: none;"></div>
+    </main>
+
+    <script src="patient.js"></script>
+</body>
+</html>
