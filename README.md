@@ -1,2 +1,29 @@
-# CareflowAI
-Website  mimicking SaaS infrastructure enabling doctors with effective diagnosis of the patients
+# CareFlow AI — Human-in-the-Loop Healthcare Triage Assistant
+
+CareFlow AI is a multilingual, multimodal clinical triage web application designed to help hospitals and clinics capture unstructured patient inputs (text, voice recordings, and medical report images) and convert them into prioritized, source-linked summaries for healthcare professionals.
+
+## Key Features
+- **Multimodal & Multilingual Intake**: Accepts English, Hindi, Hinglish, and regional Indian languages via typed descriptions, WebRTC voice recordings, and uploaded medical reports (OCR).
+- **Safety-First Non-Diagnostic AI Triage**: Uses a two-stage `gemini-2.5-flash` pipeline (`/api/gemini`) with an automatic client-side safety fallback. Identifies red-flag warning signs, missing clinical context, conflicting data across sources, and transcription/OCR uncertainty without diagnosing diseases.
+- **Source Attribution Links**: Every extracted symptom, vital sign, or lab finding is linked back to its source (``, ``, ``, or ``).
+- **Browser Cookie Sessions & Personalized Dashboards**:
+  - **Patients**: Greeted by name, with all submitted cases automatically synced and grouped by **Clinic Code**.
+  - **Doctors**: Greeted by name, with instant clinic switching and filtering across **14 hospital departments**.
+- **Case-Scoped Doctor–Patient Chat with Dynamic AI Re-Triage**:
+  - Doctors can update patients, suggest medicines, or insert AI-suggested follow-up questions with one click.
+  - Patients reply under that specific case thread. Each patient reply is analyzed by AI to update the clinical chat summary and dynamically escalate or de-escalate the case priority.
+- **Reddit-Style Queue Ordering (`▲` / `▼`) with Downgrade Confirmation**:
+  - Doctors can move cases higher or lower in priority order using upvote/downvote arrows.
+  - Attempting to move a `CRITICAL` case below an `URGENT` or `ROUTINE` case triggers a mandatory confirmation modal before reclassifying its priority tier.
+- **Full Case Lifecycle & Paramedic Dispatch**:
+  - **Close / Dissolve**: Doctors can request the patient to confirm recovery and close the case, or dissolve it directly.
+  - **Purge**: Both patients (consent withdrawal) and doctors can permanently purge records from Firebase.
+  - **Emergency Paramedic Dispatch**: Doctors can mark critical cases (such as chest pain with breathlessness) as an **Emergency**, forwarding a structured clinical packet to the hospital Paramedic Team.
+- **Audit Trail**: Every AI action and human clinician override is logged with timestamps on each case.
+
+## Deployment Instructions (GitHub + Vercel)
+1. Push all files to your GitHub repository (ensuring `gemini.js` is inside the `api/` directory: `api/gemini.js`).
+2. Import the repository into **Vercel**.
+3. In Vercel Project Settings → **Environment Variables**, add:
+   - `GEMINI_API_KEY` = `your_google_gemini_api_key`
+4. Deploy!
