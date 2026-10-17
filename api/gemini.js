@@ -17,8 +17,9 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: "Missing GEMINI_API_KEY in environment variables." });
     }
 
-    const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-3.8-flash";            // Stage 2 triage + chat re-triage
-    const EXTRACT_MODEL = process.env.GEMINI_LITE_MODEL || "gemini-3.5-flash-lite"; // Stage 1 transcription / OCR / translation
+    const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-3.8-flash";            // Stage 1 (OCR/voice/translation) + Stage 2 triage
+    const EXTRACT_MODEL = process.env.GEMINI_EXTRACT_MODEL || MODEL_NAME;          // override only if you want a different Stage 1 model
+    const CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || "gemini-3.5-flash-lite";   // high-volume chat re-triage (higher request limits)
     // Override either via Vercel env vars if Google retires a model again.
 
     try {
@@ -65,7 +66,7 @@ Return STRICT JSON matching this schema:
     "newSymptomsExtracted": ["Any newly mentioned symptom in standardized English"]
 }`;
 
-            const chatResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`, {
+            const chatResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent?key=${API_KEY}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -84,6 +85,18 @@ Return STRICT JSON matching this schema:
 
             const chatData = await chatResp.json();
             const parsedChat = JSON.parse(chatData.candidates[0].content.parts[0].text);
+
+            // Deterministic safety floor for chat: rules can only RAISE priority.
+            const rank = { ROUTINE: 1, URGENT: 2, CRITICAL: 3 };
+            const msg = String(latestPatientMessage || '').toLowerCase();
+            let floor = 'ROUTINE';
+            if (/chest (pain|tightness)|seene? me dard|सीने में दर्द|breathless|saans (lene|nahi|phool)|सांस|unconscious|behosh|बेहोश|seizure|faint|slurred|paraly|facial droop|heavy bleeding|vomiting blood|suicid/.test(msg)) floor = 'CRITICAL';
+            else if (/high fever|tez bukhar|10[3-9]\s*°?\s*f\b|vomit|worse|badh gaya|not better/.test(msg)) floor = 'URGENT';
+            if ((rank[floor] || 1) > (rank[parsedChat.updatedPriority] || 1)) {
+                parsedChat.priorityShiftReason = `Rule-based safety check raised priority ${parsedChat.updatedPriority} -> ${floor}. ` + (parsedChat.priorityShiftReason || '');
+                parsedChat.updatedPriority = floor;
+            }
+            parsedChat.modelUsed = CHAT_MODEL;
             return res.status(200).json(parsedChat);
         }
 
@@ -229,7 +242,7 @@ Output STRICTLY valid JSON matching this schema:
         }
         // Expose the Stage-1 transcript/OCR text so clinicians can verify the source themselves.
         triagedData.extractedNotes = extractedClinicalNotes;
-        triagedData.modelsUsed = { extraction: EXTRACT_MODEL, triage: MODEL_NAME };
+        triagedData.modelsUsed = { extraction: EXTRACT_MODEL, triage: MODEL_NAME, chat: CHAT_MODEL };
 
         return res.status(200).json(triagedData);
 
