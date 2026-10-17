@@ -305,7 +305,11 @@ patientForm.addEventListener('submit', async (e) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            if (!aiResponse.ok) throw new Error("API status " + aiResponse.status);
+            if (!aiResponse.ok) {
+                let detail = '';
+                try { const j = await aiResponse.json(); detail = j.details || j.error || ''; } catch (_) {}
+                throw new Error(`API status ${aiResponse.status}${detail ? ': ' + String(detail).slice(0, 300) : ''}`);
+            }
             triagedResult = await aiResponse.json();
         } catch (apiErr) {
             console.warn("Falling back to local safety triage rules:", apiErr.message);
