@@ -161,17 +161,36 @@ clearAudioBtn.addEventListener('click', () => {
     recordingStatus.style.color = '#64748b';
 });
 
-// Image OCR Converter
-reportImageInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            imageBase64 = reader.result.split(',')[1];
-            imagePreview.src = reader.result;
-            imagePreviewContainer.style.display = 'block';
+// Image OCR Converter: downscale to max 1280px JPEG so the request stays under Vercel's ~4.5MB body limit
+function compressImage(file, maxDim = 1280, quality = 0.8) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+            const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            resolve(canvas.toDataURL('image/jpeg', quality));
         };
-        reader.readAsDataURL(file);
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
+        img.src = url;
+    });
+}
+
+reportImageInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+        const dataUrl = await compressImage(file);
+        imageBase64 = dataUrl.split(',')[1];
+        imagePreview.src = dataUrl;
+        imagePreviewContainer.style.display = 'block';
+    } catch (err) {
+        alert('Could not process this image: ' + err.message + ' (try JPG or PNG)');
+        reportImageInput.value = '';
     }
 });
 
@@ -291,6 +310,8 @@ patientForm.addEventListener('submit', async (e) => {
         } catch (apiErr) {
             console.warn("Falling back to local safety triage rules:", apiErr.message);
             triagedResult = buildClientFallbackTriage(payload);
+            triagedResult.aiFallback = true;
+            triagedResult.uncertaintyNotes = [`AI UNAVAILABLE (${apiErr.message}) - rule-based triage only; image/audio NOT analysed. Review attachments manually.`, ...(triagedResult.uncertaintyNotes || [])];
         }
 
         // Priority base score for queue sorting (CRITICAL=300, URGENT=200, ROUTINE=100)
@@ -374,7 +395,7 @@ patientForm.addEventListener('submit', async (e) => {
         statusMessage.innerHTML = `
             <strong>✅ Case Submitted Successfully!</strong><br>
             Case ID: <span class="code-pill">${caseId}</span> | Clinic: <strong>${clinicCode}</strong><br>
-            AI Triage Priority: <strong>${triagedResult.priority || 'ROUTINE'}</strong> → Routed to <strong>${triagedResult.suggestedDepartment || 'General Medicine'}</strong>
+            ${triagedResult.aiFallback ? '<span style="color:#b45309;">⚠️ AI analysis failed (' + escapeHtml(triagedResult.uncertaintyNotes[0]) + ')</span><br>' : ''}AI Triage Priority: <strong>${triagedResult.priority || 'ROUTINE'}</strong> → Routed to <strong>${triagedResult.suggestedDepartment || 'General Medicine'}</strong>
         `;
         statusMessage.style.display = 'block';
 
