@@ -12,6 +12,13 @@ async function fbFetch(url, opts) {
     }
     return res;
 }
+// Unguessable random ID (e.g. PAT-K7M2QX9P). Replaces 4-digit IDs that collided and could be guessed.
+function randomId(prefix, len = 8) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars, no 0/O/1/I confusion
+    const a = new Uint32Array(len);
+    crypto.getRandomValues(a);
+    return prefix + '-' + Array.from(a, n => chars[n % chars.length]).join('');
+}
 function cleanClinicCode(v) { return String(v || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''); }
 
 // Cookie Helpers
@@ -43,7 +50,7 @@ if (!currentUser) {
     currentUser = {
         role: 'patient',
         name: '',
-        userId: 'USR-' + Math.floor(1000 + Math.random() * 9000),
+        userId: randomId('USR'),
         age: '',
         gender: '',
         knownCases: [] // [{ clinicCode, caseId }]
@@ -73,6 +80,9 @@ const refreshMyCasesBtn = document.getElementById('refreshMyCasesBtn');
 let mediaRecorder;
 let audioChunks = [];
 let audioBase64 = null;
+let audioMime = 'audio/webm';
+let recordTimer = null;
+const MAX_RECORD_SECONDS = 120; // auto-stops long recordings
 let imageBase64 = null;
 
 // Populate Greeting & Pre-fill Form from Cookie
@@ -111,7 +121,10 @@ function escapeHtml(str) {
 recordBtn.addEventListener('click', async () => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
+        // Use a format this browser really supports (Chrome: webm, Safari: mp4) and remember it
+        const preferredTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+        const chosenType = preferredTypes.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+        mediaRecorder = chosenType ? new MediaRecorder(stream, { mimeType: chosenType }) : new MediaRecorder(stream);
         audioChunks = [];
 
         mediaRecorder.ondataavailable = (event) => {
@@ -119,7 +132,8 @@ recordBtn.addEventListener('click', async () => {
         };
 
         mediaRecorder.onstop = () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            audioMime = (mediaRecorder.mimeType || 'audio/webm').split(';')[0];
+            const audioBlob = new Blob(audioChunks, { type: audioMime });
             audioPreview.src = URL.createObjectURL(audioBlob);
             audioPreview.style.display = 'block';
             clearAudioBtn.style.display = 'inline-block';
@@ -133,9 +147,11 @@ recordBtn.addEventListener('click', async () => {
         };
 
         mediaRecorder.start();
+        clearTimeout(recordTimer);
+        recordTimer = setTimeout(() => { if (!stopRecordBtn.disabled) stopRecordBtn.click(); }, MAX_RECORD_SECONDS * 1000);
         recordBtn.disabled = true;
         stopRecordBtn.disabled = false;
-        recordingStatus.textContent = "● Recording... speak now";
+        recordingStatus.textContent = `● Recording... speak now (auto-stops at ${MAX_RECORD_SECONDS}s)`;
         recordingStatus.style.color = "#ef4444";
     } catch (err) {
         alert("Microphone access denied or unavailable in this browser.");
@@ -143,6 +159,7 @@ recordBtn.addEventListener('click', async () => {
 });
 
 stopRecordBtn.addEventListener('click', () => {
+    clearTimeout(recordTimer);
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
         recordBtn.disabled = false;
@@ -270,7 +287,7 @@ patientForm.addEventListener('submit', async (e) => {
     const patientGender = document.getElementById('patientGender').value;
     const symptomOnset = document.getElementById('symptomOnset').value.trim();
     const rawSymptoms = document.getElementById('symptomsText').value.trim();
-    const caseId = 'PAT-' + Math.floor(1000 + Math.random() * 9000);
+    const caseId = randomId('PAT');
     const nowIso = new Date().toISOString();
 
     // Update Cookie with latest patient identity
@@ -293,6 +310,7 @@ patientForm.addEventListener('submit', async (e) => {
         symptomOnset,
         symptomsText: rawSymptoms,
         audioBase64,
+        audioMime,
         imageBase64,
         timestamp: nowIso
     };

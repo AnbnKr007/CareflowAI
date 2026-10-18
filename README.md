@@ -5,7 +5,7 @@ CareFlow AI is a multilingual, multimodal clinical triage web application design
 ## Key Features
 - **Multimodal & Multilingual Intake**: Accepts English, Hindi, Hinglish, and regional Indian languages via typed descriptions, WebRTC voice recordings, and uploaded medical reports (OCR).
 - **Safety-First Non-Diagnostic AI Triage**: Uses a two-stage `gemini-2.5-flash` pipeline (`/api/gemini`) with an automatic client-side safety fallback. Identifies red-flag warning signs, missing clinical context, conflicting data across sources, and transcription/OCR uncertainty without diagnosing diseases.
-- **Source Attribution Links**: Every extracted symptom, vital sign, or lab finding is linked back to its source (``, ``, ``, or ``).
+- **Source Attribution Links**: Every extracted symptom, vital sign, or lab finding is linked back to its source (Patient Text, Voice Recording, or Medical Report OCR).
 - **Browser Cookie Sessions & Personalized Dashboards**:
   - **Patients**: Greeted by name, with all submitted cases automatically synced and grouped by **Clinic Code**.
   - **Doctors**: Greeted by name, with instant clinic switching and filtering across **14 hospital departments**.
@@ -28,3 +28,11 @@ CareFlow AI is a multilingual, multimodal clinical triage web application design
    - `GEMINI_API_KEY` = `your_google_gemini_api_key`
 4. Deploy!
 
+## Assumptions & Limitations
+- **Decision support only.** CareFlow AI never diagnoses; a qualified clinician makes every final decision.
+- **Demo data.** Use synthetic or anonymised data only. This prototype is not certified for real patient records.
+- **Red-flag keywords are a starter set** and must be reviewed by a clinician before real use. Matching is deliberately not negation-aware ("no chest pain" still flags), so it errs toward over-triage; doctors can override.
+- **The AI can raise priority but never lower it** below what the safety rules set; lowering via patient chat needs doctor confirmation.
+- **Language accuracy** for Hindi, Hinglish and regional languages depends on the Gemini models and has not been benchmarked; uncertain transcription/translation is flagged for the doctor.
+- **Emergency numbers** shown on the intake form are for India (112 national, 108 ambulance).
+- **Voice notes** auto-stop at 120 seconds.
