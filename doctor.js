@@ -217,6 +217,77 @@ function updateQueueStats(cases) {
 }
 
 // Render Each Triage Card with Reddit-Style Upvote/Downvote, Source Links, Conflict/Uncertainty Flags, Chat, & Paramedic Controls
+// ============================================================================
+// SOURCE LINKS, VOICE PLAYBACK & DATE FORMATTING HELPERS
+// ============================================================================
+// Date + time for chat/audit timestamps (e.g. "18 Oct 2026, 05:12 pm")
+function fmtDateTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// Maps the AI's source label to the id of the matching "original source" block
+function sourceKey(label) {
+    const s = String(label || '').toLowerCase();
+    if (s.includes('voice')) return 'voice';
+    if (s.includes('report') || s.includes('ocr')) return 'report';
+    if (s.includes('chat')) return 'chat';
+    return 'patient';
+}
+
+// Only allow real data: URLs of the expected type to be placed into src attributes
+function safeDataUrl(u, kind) {
+    return (typeof u === 'string' && u.startsWith(`data:${kind}/`) && !/["'<>\s]/.test(u)) ? u : '';
+}
+
+function audioPlayerHtml(url) {
+    return `<audio controls preload="none" src="${url}" style="width:100%;"></audio>`;
+}
+
+const voiceCache = {};        // caseId -> audio data URL (so a queue refresh does not reload it)
+const sourcePanelState = {};  // caseId -> true/false (remembers if the doctor opened the panel)
+
+window.trackSourcePanel = function(caseId, isOpen) {
+    sourcePanelState[caseId] = !!isOpen;
+};
+
+// Click a source tag (Patient Text / Voice Recording / Medical Report OCR) -> jump to the original input
+window.jumpToSource = function(caseId, key) {
+    let target;
+    if (key === 'chat') {
+        target = document.getElementById(`docChatBox_${caseId}`);
+    } else {
+        const panel = document.getElementById(`srcPanel_${caseId}`);
+        if (panel && !panel.open) { panel.open = true; sourcePanelState[caseId] = true; }
+        target = document.getElementById(`src_${caseId}_${key}`);
+    }
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('source-flash');
+    setTimeout(() => target.classList.remove('source-flash'), 1800);
+};
+
+// Voice notes live in their own database node; load only when the doctor asks
+window.loadVoiceNote = async function(caseId) {
+    const box = document.getElementById(`voiceBox_${caseId}`);
+    if (!box) return;
+    box.innerHTML = '<span class="text-muted">Loading voice note…</span>';
+    try {
+        const res = await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/media/${caseId}.json`);
+        const media = await res.json();
+        const url = media ? safeDataUrl(media.audio, 'audio') : '';
+        if (!url) {
+            box.innerHTML = '<span class="src-unsure">Voice note not available (it may not have been saved, or was deleted).</span>';
+            return;
+        }
+        voiceCache[caseId] = url;
+        box.innerHTML = audioPlayerHtml(url);
+    } catch (err) {
+        box.innerHTML = `<span class="src-unsure">Could not load voice note: ${escapeHtml(err.message)}</span>`;
+    }
+};
+
 function renderDoctorCaseCard(caseData, index, totalCount) {
     const t = caseData.triage || {};
     const priority = t.priority || 'ROUTINE';
@@ -243,9 +314,10 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
 
     const sourcesHtml = sourceLinks.map(s => `
         <div class="source-link-item">
-            <span class="source-tag">${escapeHtml(s.source || 'Unknown source')}</span>
+            <button type="button" class="source-tag source-tag-btn" title="Jump to the original source" onclick="jumpToSource('${caseData.id}', '${sourceKey(s.source)}')">${escapeHtml(s.source || 'Unknown source')} ↗</button>
             <span>${escapeHtml(s.claim)}</span>
             <small class="conf-tag">Confidence: ${escapeHtml(s.confidence || 'High')}</small>
+            ${s.evidence ? `<div class="source-evidence">“${escapeHtml(s.evidence)}”</div>` : ''}
         </div>
     `).join('');
 
@@ -295,7 +367,7 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
         <div class="chat-bubble ${m.senderRole === 'doctor' ? 'chat-doctor' : (m.senderRole === 'system' ? 'chat-system' : 'chat-patient')}">
             <div class="chat-meta">
                 <strong>${escapeHtml(m.senderName)}</strong>
-                <span>${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>${fmtDateTime(m.timestamp)}</span>
             </div>
             <div class="chat-text">${escapeHtml(m.text)}</div>
         </div>
@@ -304,8 +376,57 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
     // Audit Log
     const audits = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
     const auditHtml = audits.map(a => `
-        <li><strong>${new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong> — <em>${escapeHtml(a.actor)}:</em>${escapeHtml(a.action)}</li>
+        <li><strong>${fmtDateTime(a.timestamp)}</strong> — <em>${escapeHtml(a.actor)}:</em>${escapeHtml(a.action)}</li>
     `).join('');
+
+    // Original sources: what the patient actually provided + what the AI read from it
+    const src = t.sources || {};
+    const srcPatient = src.patientText || {};
+    const srcVoice = src.voice || {};
+    const srcReport = src.report || {};
+    const listText = (arr) => (Array.isArray(arr) && arr.length) ? arr.map(escapeHtml).join('; ') : '';
+    const cachedVoice = voiceCache[caseData.id];
+
+    const patientBlock = caseData.symptomsText ? `
+        <div class="src-block" id="src_${caseData.id}_patient">
+            <div class="src-title">📝 Patient Text</div>
+            <div class="src-text"><strong>Original${srcPatient.language ? ' (' + escapeHtml(srcPatient.language) + ')' : ''}:</strong> ${escapeHtml(caseData.symptomsText)}</div>
+            ${(srcPatient.english && String(srcPatient.english).trim() !== String(caseData.symptomsText).trim()) ? `<div class="src-text"><strong>English translation:</strong> ${escapeHtml(srcPatient.english)}</div>` : ''}
+        </div>` : '';
+
+    const voiceBlock = caseData.hasAudio ? `
+        <div class="src-block" id="src_${caseData.id}_voice">
+            <div class="src-title">🎙️ Voice Recording</div>
+            <div id="voiceBox_${caseData.id}">${cachedVoice ? audioPlayerHtml(cachedVoice) : `<button type="button" class="chip-btn" onclick="loadVoiceNote('${caseData.id}')">▶ Load voice note</button>`}</div>
+            ${srcVoice.transcript ? `<div class="src-text"><strong>Transcript${srcVoice.language ? ' (' + escapeHtml(srcVoice.language) + ')' : ''}:</strong> ${escapeHtml(srcVoice.transcript)}</div>` : ''}
+            ${srcVoice.english ? `<div class="src-text"><strong>English translation:</strong> ${escapeHtml(srcVoice.english)}</div>` : ''}
+            ${listText(srcVoice.unclearParts) ? `<div class="src-unsure">❓ Unclear: ${listText(srcVoice.unclearParts)}</div>` : ''}
+        </div>` : '';
+
+    const reportImg = safeDataUrl(caseData.imagePreviewData, 'image');
+    const reportBlock = (caseData.hasImage || srcReport.extractedText) ? `
+        <div class="src-block" id="src_${caseData.id}_report">
+            <div class="src-title">📄 Medical Report</div>
+            ${reportImg ? `<img class="report-thumb" src="${reportImg}" alt="Attached medical report" title="Click to enlarge / shrink" onclick="this.classList.toggle('report-thumb-big')">` : ''}
+            ${srcReport.extractedText ? `<div class="src-text"><strong>Text read from the report (OCR):</strong> ${escapeHtml(srcReport.extractedText)}</div>` : ''}
+            ${listText(srcReport.unreadableParts) ? `<div class="src-unsure">❓ Hard to read: ${listText(srcReport.unreadableParts)}</div>` : ''}
+        </div>` : '';
+
+    const panelOpen = (caseData.id in sourcePanelState) ? sourcePanelState[caseData.id] : !!t.translationUncertain;
+    const sourcesPanelHtml = (patientBlock || voiceBlock || reportBlock) ? `
+        <details class="original-sources" id="srcPanel_${caseData.id}" ${panelOpen ? 'open' : ''} ontoggle="trackSourcePanel('${caseData.id}', this.open)">
+            <summary>🔎 Original sources &mdash; verify what the AI read</summary>
+            ${patientBlock}${voiceBlock}${reportBlock}
+        </details>` : '';
+
+    // Raised ONLY when the AI reports an uncertain transcription/translation
+    const firstSourceKey = caseData.symptomsText ? 'patient' : (caseData.hasAudio ? 'voice' : 'report');
+    const translationBannerHtml = t.translationUncertain ? `
+        <div class="translation-banner">
+            🌐 <strong>Translation / transcription uncertain &mdash; please verify against the original input.</strong>
+            ${(Array.isArray(t.translationUncertaintyReasons) && t.translationUncertaintyReasons.length) ? `<ul>${t.translationUncertaintyReasons.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>` : ''}
+            <button type="button" class="chip-btn" onclick="jumpToSource('${caseData.id}', '${firstSourceKey}')">See original input ↗</button>
+        </div>` : '';
 
     const card = document.createElement('div');
     card.className = `triage-card ${priorityClass} ${isDissolved ? 'case-dissolved' : ''}`;
@@ -350,7 +471,7 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                     </div>
                 ` : ''}
 
-                ${warningSignsHtml}${vitalsHtml}
+                ${translationBannerHtml}${warningSignsHtml}${vitalsHtml}
 
                 <div class="card-body-grid">
                     <div>
@@ -366,12 +487,7 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                         <div class="section-title">Source Attribution Links</div>
                         <div class="sources-list">${sourcesHtml}</div>
 
-                        ${caseData.imagePreviewData ? `
-                            <div style="margin-top:8px;">
-                                <div class="section-title">Attached Medical Report (OCR Source)</div>
-                                <img src="${caseData.imagePreviewData}" alt="Attached Report" style="max-height:120px; border-radius:6px; border:1px solid #cbd5e1;">
-                            </div>
-                        ` : ''}
+                        ${sourcesPanelHtml}
                     </div>
 
                     <div>
@@ -652,7 +768,7 @@ window.approveAndSend = async function(caseId) {
                 status: caseData.status === 'EMERGENCY_DISPATCHED' ? 'EMERGENCY_DISPATCHED' : 'APPROVED',
                 doctorNote: note || "Triage validated. Proceed to OPD consultation.",
                 reviewedBy: docName,
-                reviewedAt: new Date().toLocaleTimeString(),
+                reviewedAt: new Date().toLocaleString(),
                 auditLog
             })
         });
@@ -745,6 +861,8 @@ window.purgeRecord = async function(caseId) {
 
     try {
         await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, { method: 'DELETE' });
+        await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/media/${caseId}.json`, { method: 'DELETE' });
+        delete voiceCache[caseId];
         if (caseData && caseData.patientUserId) {
             await fbFetch(`${FIREBASE_URL}/patients/${caseData.patientUserId}/cases/${caseId}.json`, { method: 'DELETE' });
         }
@@ -790,7 +908,7 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
     const docName = docNameInput.value.trim() || currentUser.name || 'Dr. Sharma';
     const dispatchNote = document.getElementById('paramedicNotesInput')?.value || 'Immediate ALS Paramedic response requested.';
     const dispatchId = 'EMS-' + Math.floor(10000 + Math.random() * 90000);
-    const nowTime = new Date().toLocaleTimeString();
+    const nowTime = new Date().toLocaleString();
     const nowIso = new Date().toISOString();
 
     const paramedicDispatch = {
@@ -851,5 +969,6 @@ setInterval(() => {
     const modalOpen = priorityConfirmModal.style.display !== 'none' || paramedicModal.style.display !== 'none';
     const typing = Array.from(document.querySelectorAll('.chat-input-row input')).some(i => i.value || i === document.activeElement);
     const editing = Array.from(document.querySelectorAll('.referral-note-box textarea')).some(t => t.value !== t.defaultValue || t === document.activeElement);
-    if (!modalOpen && !typing && !editing && !document.hidden) fetchCloudQueue(true);
+    const playing = Array.from(document.querySelectorAll('audio')).some(a => !a.paused && !a.ended);
+    if (!modalOpen && !typing && !editing && !playing && !document.hidden) fetchCloudQueue(true);
 }, 10000);

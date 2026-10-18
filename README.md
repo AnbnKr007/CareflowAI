@@ -36,3 +36,6 @@ CareFlow AI is a multilingual, multimodal clinical triage web application design
 - **Language accuracy** for Hindi, Hinglish and regional languages depends on the Gemini models and has not been benchmarked; uncertain transcription/translation is flagged for the doctor.
 - **Emergency numbers** shown on the intake form are for India (112 national, 108 ambulance).
 - **Voice notes** auto-stop at 120 seconds.
+- **Voice notes** are stored in a separate database node so the doctor can play them back; they are deleted when a case is withdrawn or purged.
+- **Patients never see the AI priority label.** It is shown to clinicians only.
+- **Translation uncertainty** is flagged only when the AI reports it is genuinely unsure about a transcription or translation; the doctor can then check the original input beside the AI's reading.

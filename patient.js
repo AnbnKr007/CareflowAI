@@ -108,6 +108,13 @@ window.setClinicInput = function(code) {
     document.getElementById('clinicCode').value = code;
 };
 
+// Date + time for chat/audit style timestamps (e.g. "18 Oct 2026, 05:12 pm")
+function fmtDateTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function escapeHtml(str) {
     if (!str) return '';
     return String(str)
@@ -384,9 +391,27 @@ patientForm.addEventListener('submit', async (e) => {
                     timestamp: nowIso,
                     actor: 'CareFlow AI Triage Engine',
                     action: `Initial triage categorized as ${triagedResult.priority || 'ROUTINE'} → Routed to ${triagedResult.suggestedDepartment || 'General Medicine'}.`
-                }
+                },
+                ...(triagedResult.translationUncertain ? [{
+                    timestamp: nowIso,
+                    actor: 'CareFlow AI Triage Engine',
+                    action: `Flagged uncertain translation/transcription for clinician verification: ${(triagedResult.translationUncertaintyReasons || []).join('; ') || 'see original sources'}.`
+                }] : [])
             ]
         };
+
+        // 0. Store the voice note in a separate node (keeps the doctor's queue light) so clinicians can play it back
+        if (audioBase64) {
+            try {
+                await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/media/${caseId}.json`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ audio: `data:${audioMime};base64,${audioBase64}`, mime: audioMime, savedAt: nowIso })
+                });
+            } catch (mediaErr) {
+                console.warn('Voice note could not be stored for playback:', mediaErr.message);
+            }
+        }
 
         // 1. Save to Clinic Queue in Firebase
         await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
@@ -417,7 +442,7 @@ patientForm.addEventListener('submit', async (e) => {
         statusMessage.innerHTML = `
             <strong>✅ Case Submitted Successfully!</strong><br>
             Case ID: <span class="code-pill">${caseId}</span> | Clinic: <strong>${clinicCode}</strong><br>
-            ${triagedResult.aiFallback ? '<span style="color:#b45309;">⚠️ AI analysis failed (' + escapeHtml(triagedResult.uncertaintyNotes[0]) + ')</span><br>' : ''}AI Triage Priority: <strong>${triagedResult.priority || 'ROUTINE'}</strong> → Routed to <strong>${triagedResult.suggestedDepartment || 'General Medicine'}</strong>
+            ${triagedResult.aiFallback ? '<span style="color:#b45309;">⚠️ AI analysis failed (' + escapeHtml(triagedResult.uncertaintyNotes[0]) + ')</span><br>' : ''}Sent to the <strong>${escapeHtml(triagedResult.suggestedDepartment || 'General Medicine')}</strong> team for review by a qualified healthcare professional.<br><small>If your symptoms get worse, call <strong>112</strong> or go to the nearest hospital.</small>
         `;
         statusMessage.style.display = 'block';
 
@@ -522,19 +547,18 @@ async function loadPatientCasesByClinic(silent = false) {
 // Render an Individual Patient Case Card with Doctor Updates, Closure Request Banner, & Live Chat
 function renderPatientCaseCard(caseData) {
     const card = document.createElement('div');
-    const priority = (caseData.triage && caseData.triage.priority) || 'ROUTINE';
     const isDissolved = caseData.status === 'DISSOLVED';
     const isClosureRequested = caseData.status === 'CLOSURE_REQUESTED';
     const isEmergency = caseData.status === 'EMERGENCY_DISPATCHED' || !!caseData.paramedicDispatch;
 
-    card.className = `patient-case-card priority-${priority.toLowerCase()} ${isDissolved ? 'case-dissolved' : ''}`;
+    card.className = `patient-case-card ${isDissolved ? 'case-dissolved' : ''}`;
 
     const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
     const chatHtml = messages.map(m => `
         <div class="chat-bubble ${m.senderRole === 'doctor' ? 'chat-doctor' : (m.senderRole === 'system' ? 'chat-system' : 'chat-patient')}">
             <div class="chat-meta">
                 <strong>${escapeHtml(m.senderName)}</strong>
-                <span>${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>${fmtDateTime(m.timestamp)}</span>
             </div>
             <div class="chat-text">${escapeHtml(m.text)}</div>
         </div>
@@ -547,7 +571,6 @@ function renderPatientCaseCard(caseData) {
                 <span class="dept-tag">${escapeHtml(caseData.triage?.suggestedDepartment || 'General Medicine')}</span>
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
-                <span class="priority-badge">${escapeHtml(priority)}</span>
                 <span class="status-pill status-${(caseData.status || 'PENDING_REVIEW').toLowerCase()}">${escapeHtml(caseData.status.replace(/_/g, ' '))}</span>
             </div>
         </div>
@@ -587,7 +610,7 @@ function renderPatientCaseCard(caseData) {
         <div class="chat-section">
             <div class="chat-header-bar">
                 <span>💬 Consultation Thread (${messages.length})</span>
-                <small class="text-muted">AI updates priority dynamically based on your replies</small>
+                <small class="text-muted">Your replies are reviewed by AI and your care team</small>
             </div>
             <div class="chat-messages-box" id="chatBox_${caseData.id}">
                 ${chatHtml || '<p class="text-muted">No messages yet.</p>'}
@@ -833,6 +856,7 @@ window.withdrawPatientCase = async function(clinicCode, caseId) {
 
     try {
         await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, { method: 'DELETE' });
+        await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/media/${caseId}.json`, { method: 'DELETE' });
         await fbFetch(`${FIREBASE_URL}/patients/${currentUser.userId}/cases/${caseId}.json`, { method: 'DELETE' });
 
         currentUser.knownCases = (currentUser.knownCases || []).filter(c => !(c.caseId === caseId && c.clinicCode === clinicCode));
