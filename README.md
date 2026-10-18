@@ -27,3 +27,4 @@ CareFlow AI is a multilingual, multimodal clinical triage web application design
 3. In Vercel Project Settings → **Environment Variables**, add:
    - `GEMINI_API_KEY` = `your_google_gemini_api_key`
 4. Deploy!
+5.Test
