@@ -109,6 +109,7 @@ function initDoctorProfileBar() {
             <small>(${escapeHtml(currentUser.userId)} • Clinic: ${escapeHtml(currentClinic)})</small>
         </span>
         <a href="index.html" class="ghost-btn sm-btn">Switch Role / Profile</a>
+        <button type="button" class="ghost-btn sm-btn" onclick="CareFlowDoctorAuth.signOut()">Sign out</button>
     `;
 
     // Populate saved clinics in quick switcher
@@ -288,6 +289,47 @@ window.loadVoiceNote = async function(caseId) {
     }
 };
 
+// ============================================================================
+// DYNAMIC FOLLOW-UP QUESTIONS
+// caseData.followUps = { active: [unasked suggestions], history: [{question,status,askedAt,askedBy,answeredAt,answer}], updatedAt }
+// Cases created before this feature fall back to the intake suggestions (triage.followUpQuestions).
+// ============================================================================
+function getFollowUpState(caseData) {
+    const fu = caseData.followUps || null;
+    const history = fu && Array.isArray(fu.history) ? fu.history : [];
+    const active = fu
+        ? (Array.isArray(fu.active) ? fu.active : [])
+        : (Array.isArray(caseData.triage && caseData.triage.followUpQuestions) ? caseData.triage.followUpQuestions : []);
+    return { active, history };
+}
+
+function normQ(s) {
+    return String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function wordOverlap(a, b) {
+    const A = new Set(normQ(a).split(' ').filter(Boolean));
+    const B = new Set(normQ(b).split(' ').filter(Boolean));
+    if (!A.size || !B.size) return 0;
+    let hit = 0;
+    A.forEach(w => { if (B.has(w)) hit++; });
+    return hit / Math.min(A.size, B.size);
+}
+
+// Which suggested questions did this chat message actually use? (sent as-is, shortened, or lightly edited)
+function findUsedSuggestions(text, active, hint) {
+    const nm = normQ(text);
+    const words = nm ? nm.split(' ').length : 0;
+    return active.filter(q => {
+        const nq = normQ(q);
+        if (!nq || !nm) return false;
+        if (nm.includes(nq)) return true;                                   // the question was sent (maybe with extra words)
+        if (nm.length >= 12 && nq.includes(nm)) return true;                // a shortened version was sent
+        if (hint && q === hint) return words >= 3 && wordOverlap(text, q) >= 0.4;   // started from the button, then edited
+        return words >= 4 && wordOverlap(text, q) >= 0.8;                   // retyped almost the same question
+    });
+}
+
 function renderDoctorCaseCard(caseData, index, totalCount) {
     const t = caseData.triage || {};
     const priority = t.priority || 'ROUTINE';
@@ -352,14 +394,33 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
         : '';
 
     // AI Follow-Up Questions (Click to insert into chat)
-    const questionsHtml = Array.isArray(t.followUpQuestions) && t.followUpQuestions.length
-        ? t.followUpQuestions.map(q => `
+    const fuState = getFollowUpState(caseData);
+    const awaitingQs = fuState.history.filter(h => h.status === 'ASKED');
+    const answeredQs = fuState.history.filter(h => h.status === 'ANSWERED');
+
+    const activeHtml = fuState.active.map((q, i) => `
             <li class="followup-item">
                 <span>${escapeHtml(q)}</span>
-                <button type="button" class="chip-btn" onclick="askFollowUpInChat('${caseData.id}',${JSON.stringify(q).replace(/"/g, '&quot;')})">Ask in Chat ↵</button>
+                <button type="button" class="chip-btn" onclick="askFollowUpInChat('${caseData.id}', ${i})">Ask in Chat ↵</button>
             </li>
-        `).join('')
-        : '<li>None suggested</li>';
+        `).join('');
+    const awaitingHtml = awaitingQs.map(h => `
+            <li class="followup-item followup-pending">
+                <span>${escapeHtml(h.question)}</span>
+                <small>⏳ Asked ${escapeHtml(fmtDateTime(h.askedAt))} &mdash; awaiting patient reply</small>
+            </li>
+        `).join('');
+    const questionsHtml = (activeHtml || awaitingHtml)
+        ? activeHtml + awaitingHtml
+        : `<li class="followup-empty">${answeredQs.length ? 'No further questions suggested right now &mdash; the patient\u2019s latest reply is summarised below.' : 'None suggested'}</li>`;
+    const answeredHtml = answeredQs.length ? `
+        <details class="followup-answered">
+            <summary>✓ Asked &amp; answered (${answeredQs.length})</summary>
+            <ul>${answeredQs.map(h => `
+                <li><strong>Q:</strong> ${escapeHtml(h.question)}<br><em>Patient (${escapeHtml(fmtDateTime(h.answeredAt))}):</em> &ldquo;${escapeHtml(h.answer || '')}&rdquo;</li>`).join('')}
+            </ul>
+        </details>` : '';
+    const followUpUpdatedAt = (caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp;
 
     // Messages
     const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
@@ -492,7 +553,9 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
 
                     <div>
                         <div class="section-title">AI Suggested Follow-Up Questions</div>
+                        <div class="followup-meta">Updates automatically after each patient reply${followUpUpdatedAt ? ' &middot; refreshed ' + escapeHtml(fmtDateTime(followUpUpdatedAt)) : ''}</div>
                         <ul class="followup-list">${questionsHtml}</ul>
+                        ${answeredHtml}
 
                         ${alertHtml}
 
@@ -694,12 +757,14 @@ window.handleDirectPrioritySelect = async function(caseId, newPriority) {
 // ============================================================================
 // DOCTOR-PATIENT CHATTING & FOLLOW-UPINSERTION
 // ============================================================================
-window.askFollowUpInChat = function(caseId, questionText) {
+window.askFollowUpInChat = function(caseId, index) {
+    const caseData = currentCasesList.find(c => c.id === caseId);
+    const question = caseData ? getFollowUpState(caseData).active[index] : null;
     const input = document.getElementById(`docChatInput_${caseId}`);
-    if (input) {
-        input.value = questionText;
-        input.focus();
-    }
+    if (!question || !input) return;
+    input.value = question;
+    input.dataset.suggestion = question; // remembered so sending it marks the question as used
+    input.focus();
 };
 
 window.sendDoctorChatMessage = async function(caseId) {
@@ -729,13 +794,35 @@ window.sendDoctorChatMessage = async function(caseId) {
         action: `Sent clinical chat update to patient: "${text.substring(0, 80)}"`
     });
 
+    // Did this message use any AI-suggested follow-up question? If so, mark it as asked (it leaves the
+    // suggestions until the patient replies, then the AI proposes new questions from the reply).
+    const fuState = getFollowUpState(caseData);
+    const usedQs = findUsedSuggestions(text, fuState.active, input.dataset.suggestion || '');
+    const patch = { messages, auditLog };
+    if (usedQs.length) {
+        patch.followUps = {
+            active: fuState.active.filter(q => !usedQs.includes(q)),
+            history: [
+                ...fuState.history,
+                ...usedQs.map(q => ({ question: q, status: 'ASKED', askedAt: nowIso, askedBy: docName }))
+            ],
+            updatedAt: (caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp || nowIso
+        };
+        auditLog.push({
+            timestamp: nowIso,
+            actor: docName,
+            action: `Used AI-suggested follow-up question${usedQs.length > 1 ? 's' : ''}: "${usedQs.join('" / "').substring(0, 120)}"`
+        });
+    }
+
     try {
         await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages, auditLog })
+            body: JSON.stringify(patch)
         });
         input.value = '';
+        input.dataset.suggestion = '';
         await fetchCloudQueue();
     } catch (err) {
         alert("Failed to send chat message: " + err.message);
@@ -960,15 +1047,37 @@ closeParamedicModalBtn.addEventListener('click', () => {
     pendingParamedicCase = null;
 });
 
-// Initialize on load
-initDoctorProfileBar();
-fetchCloudQueue();
+// ============================================================================
+// START-UP (only after the doctor has signed in with their 4-digit PIN)
+// No patient data is requested and no auto-refresh runs while the sign-in screen is showing.
+// ============================================================================
+let dashboardStarted = false;
 
-// Auto-refresh the queue so new patient submissions appear live (skipped while the doctor is typing/editing)
-setInterval(() => {
-    const modalOpen = priorityConfirmModal.style.display !== 'none' || paramedicModal.style.display !== 'none';
-    const typing = Array.from(document.querySelectorAll('.chat-input-row input')).some(i => i.value || i === document.activeElement);
-    const editing = Array.from(document.querySelectorAll('.referral-note-box textarea')).some(t => t.value !== t.defaultValue || t === document.activeElement);
-    const playing = Array.from(document.querySelectorAll('audio')).some(a => !a.paused && !a.ended);
-    if (!modalOpen && !typing && !editing && !playing && !document.hidden) fetchCloudQueue(true);
-}, 10000);
+function startDoctorDashboard(loginName) {
+    if (dashboardStarted) return;
+    dashboardStarted = true;
+
+    // Use the name the doctor just signed in with
+    if (loginName) {
+        currentUser.name = loginName;
+        setCookie('careflow_user', currentUser, 30);
+    }
+
+    initDoctorProfileBar();
+    fetchCloudQueue();
+
+    // Auto-refresh the queue so new patient submissions appear live (skipped while the doctor is typing/editing)
+    setInterval(() => {
+        const modalOpen = priorityConfirmModal.style.display !== 'none' || paramedicModal.style.display !== 'none';
+        const typing = Array.from(document.querySelectorAll('.chat-input-row input')).some(i => i.value || i === document.activeElement);
+        const editing = Array.from(document.querySelectorAll('.referral-note-box textarea')).some(t => t.value !== t.defaultValue || t === document.activeElement);
+        const playing = Array.from(document.querySelectorAll('audio')).some(a => !a.paused && !a.ended);
+        if (!modalOpen && !typing && !editing && !playing && !document.hidden) fetchCloudQueue(true);
+    }, 10000);
+}
+
+if (window.CareFlowDoctorAuth && window.CareFlowDoctorAuth.isAuthenticated()) {
+    startDoctorDashboard();
+} else {
+    window.addEventListener('careflow-doctor-login', (e) => startDoctorDashboard(e.detail && e.detail.name), { once: true });
+}

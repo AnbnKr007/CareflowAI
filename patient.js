@@ -638,6 +638,24 @@ function renderPatientCaseCard(caseData) {
     return card;
 }
 
+// ---- Dynamic follow-up questions: shared helpers --------------------------------------------
+// caseData.followUps = { active: [unasked suggestions], history: [{question,status,askedAt,answeredAt,answer}], updatedAt }
+// Cases created before this feature fall back to the intake suggestions (triage.followUpQuestions).
+function getFollowUpState(caseData) {
+    const fu = caseData.followUps || null;
+    const history = fu && Array.isArray(fu.history) ? fu.history : [];
+    const active = fu
+        ? (Array.isArray(fu.active) ? fu.active : [])
+        : (Array.isArray(caseData.triage?.followUpQuestions) ? caseData.triage.followUpQuestions : []);
+    return { active, history };
+}
+
+function sameQuestion(a, b) {
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+    const x = norm(a), y = norm(b);
+    return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+}
+
 // Patient Sends a Chat Reply under a Specific Case (Triggers AI Summary & Dynamic Priority Shift)
 window.sendPatientChatMessage = async function(clinicCode, caseId) {
     const inputEl = document.getElementById(`chatInput_${caseId}`);
@@ -663,6 +681,8 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             timestamp: nowIso
         });
 
+        const fuState = getFollowUpState(caseData);
+
         // Call AI backend in 'chat_update' mode to summarize follow-up & re-evaluate priority
         let chatAiResult = null;
         try {
@@ -677,7 +697,9 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
                         currentPriority: caseData.triage?.priority || 'ROUTINE',
                         suggestedDepartment: caseData.triage?.suggestedDepartment || 'General Medicine',
                         clinicalSummary: caseData.triage?.clinicalSummary || caseData.symptomsText,
-                        standardizedSymptoms: caseData.triage?.standardizedSymptoms || []
+                        standardizedSymptoms: caseData.triage?.standardizedSymptoms || [],
+                        askedQuestions: fuState.history.map(h => ({ question: h.question, status: h.status, answer: h.answer || '' })),
+                        activeQuestions: fuState.active
                     },
                     messages,
                     latestPatientMessage: text
@@ -745,12 +767,35 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             ];
         }
 
+        // --- Dynamic follow-up questions ---------------------------------------------------------
+        // 1) Questions the doctor asked are now answered by this reply
+        const newHistory = fuState.history.map(h => h.status === 'ASKED'
+            ? { ...h, status: 'ANSWERED', answeredAt: nowIso, answer: text.slice(0, 200) }
+            : h);
+        const answeredNow = fuState.history.filter(h => h.status === 'ASKED').length;
+        // 2) Replace the suggestions with the AI's fresh ones (or keep the unasked ones if the AI could not refresh)
+        const aiRefreshed = Array.isArray(chatAiResult.followUpQuestions);
+        const newActive = (aiRefreshed ? chatAiResult.followUpQuestions : fuState.active)
+            .filter(q => typeof q === 'string' && q.trim() && !newHistory.some(h => sameQuestion(h.question, q)));
+        const newFollowUps = {
+            active: newActive,
+            history: newHistory,
+            updatedAt: aiRefreshed ? nowIso : ((caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp || nowIso)
+        };
+
         const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
         auditLog.push({
             timestamp: nowIso,
             actor: `Patient (${caseData.patientName})`,
             action: `Sent chat reply: "${text.substring(0, 80)}"`
         });
+        if (aiRefreshed) {
+            auditLog.push({
+                timestamp: nowIso,
+                actor: 'CareFlow AI Re-Triage',
+                action: `Refreshed follow-up questions from the patient's reply (${newActive.length} suggested${answeredNow ? ', ' + answeredNow + ' asked question' + (answeredNow > 1 ? 's' : '') + ' answered' : ''}).`
+            });
+        }
 
         if (newPriority !== oldPriority) {
             auditLog.push({
@@ -771,6 +816,7 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
                 triage: updatedTriage,
                 chatAiSummary: (chatAiResult.chatSummary || `Patient update: ${text}`) + deescalationNote,
                 queueScore: newQueueScore,
+                followUps: newFollowUps,
                 auditLog
             })
         });
