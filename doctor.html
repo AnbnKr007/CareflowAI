@@ -7,34 +7,15 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="portal-body doctor-locked">
-    <!-- Clinician Sign-In Gate (Requires Clinic Code + 4-Digit Clinic Pass) -->
+    <!-- Clinician Sign-In Gate (Requires Doctor Name + Clinic Code + 4-Digit Clinic Pass) -->
     <div id="doctorLoginGate" class="doctor-login-gate" role="dialog" aria-modal="true" aria-labelledby="doctorLoginTitle">
         <form id="doctorLoginForm" class="doctor-login-card" autocomplete="off" novalidate>
             <div class="login-brand">🩺 CareFlow AI • Clinician Association</div>
             <h2 id="doctorLoginTitle">Doctor Clinic Sign-In</h2>
-            <p class="login-sub">Enter your Clinic Code and the clinic's 4-digit pass to associate with the clinic and access its patient cases.</p>
+            <p class="login-sub">Enter your name, Clinic Code, and the clinic's 4-digit pass to access and attend all patient cases in the clinic.</p>
 
             <label for="doctorLoginName">Doctor Full Name *</label>
             <input type="text" id="doctorLoginName" placeholder="Dr. Ananya Sharma" autocomplete="off" required>
-
-            <label for="doctorLoginDept">Primary Specialty / Department *</label>
-            <select id="doctorLoginDept" style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem;">
-                <option value="All">All Departments (General / Duty Doctor)</option>
-                <option value="Emergency & Trauma">Emergency &amp; Trauma</option>
-                <option value="General Medicine">General Medicine</option>
-                <option value="Cardiology">Cardiology</option>
-                <option value="Pulmonology">Pulmonology</option>
-                <option value="Neurology">Neurology</option>
-                <option value="Orthopedics">Orthopedics</option>
-                <option value="Pediatrics">Pediatrics</option>
-                <option value="Gastroenterology">Gastroenterology</option>
-                <option value="Dermatology">Dermatology</option>
-                <option value="Psychiatry">Psychiatry</option>
-                <option value="Obstetrics & Gynecology">Obstetrics &amp; Gynecology (OB-GYN)</option>
-                <option value="ENT">ENT (Otolaryngology)</option>
-                <option value="Nephrology">Nephrology</option>
-                <option value="Oncology">Oncology</option>
-            </select>
 
             <label for="doctorLoginClinicCode">Clinic Code *</label>
             <input type="text" id="doctorLoginClinicCode" placeholder="e.g. CARE-101" autocomplete="off" required style="text-transform: uppercase;">
@@ -47,7 +28,7 @@
             <button type="submit" id="doctorLoginSubmitBtn" class="primary-btn full-width">Verify Clinic Pass &amp; Sign In →</button>
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.84rem;">
                 <a href="index.html" class="login-back" style="margin:0;">← Back to home</a>
-                <a href="clinic.html" class="login-back" style="margin:0; color:#2563eb; font-weight:600;">Register a Clinic →</a>
+                <a href="clinic.html" class="login-back" style="margin:0; color:#2563eb; font-weight:600;">Register / View Clinic →</a>
             </div>
             <p id="doctorLoginNote" class="login-note"></p>
         </form>
@@ -57,14 +38,14 @@
     <header class="portal-topbar">
         <div class="topbar-left">
             <a href="index.html" class="back-link">← Home</a>
-            <span class="badge badge-doctor">🩺 Clinician Triage Console</span>
+            <span class="badge badge-doctor">🩺 Clinician Triage Console (All Departments)</span>
         </div>
         <div id="doctorGreetingHeader" class="topbar-right">
-            <!-- Populated from Cookie/Session -->
+            <!-- Populated from Session -->
         </div>
     </header>
 
-    <!-- Clinic & Department Switcher Bar -->
+    <!-- Clinic & Filter Bar -->
     <section class="clinic-control-bar">
         <form id="doctorFilterForm" class="clinic-switcher-form">
             <div class="switcher-item">
@@ -73,19 +54,19 @@
             </div>
 
             <div class="switcher-item">
-                <label for="docClinicCode">Associated Clinic Code (Pass Protected)</label>
+                <label for="docClinicCode">Associated Clinic Code</label>
                 <div style="display:flex; gap:6px;">
-                    <input type="text" id="docClinicCode" placeholder="e.g. CARE-101" value="CARE-101" required style="width: 130px; text-transform: uppercase;">
+                    <input type="text" id="docClinicCode" placeholder="e.g. CARE-101" required style="width: 135px; text-transform: uppercase;">
                     <select id="quickClinicSelect" title="Switch Associated Clinic" style="width: 145px;">
-                        <option value="">Switch Clinic...</option>
+                        <option value="">Unlocked Clinics...</option>
                     </select>
                 </div>
             </div>
 
             <div class="switcher-item">
-                <label for="docDepartment">Department Filter (14 Specialties)</label>
+                <label for="docDepartment">Department View (All Visible by Default)</label>
                 <select id="docDepartment">
-                    <option value="All">All Departments (Priority Order)</option>
+                    <option value="All" selected>All Departments (Show Every Case)</option>
                     <option value="Emergency & Trauma">Emergency &amp; Trauma</option>
                     <option value="General Medicine">General Medicine</option>
                     <option value="Cardiology">Cardiology</option>
@@ -104,13 +85,15 @@
             </div>
 
             <div class="switcher-item">
-                <label for="docStatusFilter">Case Status</label>
+                <label for="docStatusFilter">Case Status Filter</label>
                 <select id="docStatusFilter">
-                    <option value="ACTIVE">Active Queue (Pending, Approved &amp; Emergency)</option>
-                    <option value="ALL">All Cases (Including Dissolved)</option>
-                    <option value="PENDING_REVIEW">Pending Initial Review Only</option>
-                    <option value="EMERGENCY_DISPATCHED">Emergency Dispatched Only</option>
-                    <option value="DISSOLVED">Dissolved / Closed Only</option>
+                    <option value="ALL" selected>All Cases in Clinic (Active &amp; Closed)</option>
+                    <option value="ACTIVE">Active Queue Only (Excl. Dissolved)</option>
+                    <option value="ATTENDING">Currently Attending</option>
+                    <option value="PENDING_REVIEW">Pending Initial Review</option>
+                    <option value="APPROVED">Approved / Note Sent</option>
+                    <option value="EMERGENCY_DISPATCHED">Emergency Dispatched</option>
+                    <option value="DISSOLVED">Dissolved / Closed</option>
                 </select>
             </div>
 
@@ -126,6 +109,7 @@
         <div class="stat-pill stat-critical">🔴 Critical: <strong id="countCritical">0</strong></div>
         <div class="stat-pill stat-urgent">🟠 Urgent: <strong id="countUrgent">0</strong></div>
         <div class="stat-pill stat-routine">🟢 Routine: <strong id="countRoutine">0</strong></div>
+        <div class="stat-pill">🩺 Attending: <strong id="countAttending">0</strong></div>
         <div class="stat-pill stat-total">📋 Total Shown: <strong id="countTotal">0</strong></div>
     </section>
 
@@ -136,15 +120,13 @@
         </div>
     </main>
 
-    <!-- Modal 1: Priority Downgrade Confirmation Modal (Reddit-style Arrow Guardrail) -->
+    <!-- Modal 1: Priority Downgrade Confirmation Modal -->
     <div id="priorityConfirmModal" class="modal-overlay" style="display: none;">
         <div class="modal-card">
             <div class="modal-header warning-header">
                 <h3>⚠️ Confirm Priority Reclassification</h3>
             </div>
-            <div class="modal-body" id="priorityConfirmBody">
-                <!-- Populated dynamically -->
-            </div>
+            <div class="modal-body" id="priorityConfirmBody"></div>
             <div class="modal-actions">
                 <button type="button" id="confirmPriorityChangeBtn" class="approve-btn">Confirm &amp; Change Priority</button>
                 <button type="button" id="cancelPriorityChangeBtn" class="override-btn">Cancel</button>
@@ -158,9 +140,7 @@
             <div class="modal-header emergency-header">
                 <h3>🚨 Hospital Paramedic Rapid Response Dispatch</h3>
             </div>
-            <div class="modal-body" id="paramedicModalBody">
-                <!-- Populated dynamically with patient details -->
-            </div>
+            <div class="modal-body" id="paramedicModalBody"></div>
             <div class="modal-actions">
                 <button type="button" id="confirmParamedicDispatchBtn" class="emergency-btn">🚑 Transmit Patient Packet to Paramedic Unit</button>
                 <button type="button" id="closeParamedicModalBtn" class="override-btn">Close</button>
@@ -177,7 +157,7 @@
             <form id="clinicSwitchPassForm">
                 <div class="modal-body">
                     <p style="margin-top:0; font-size:0.9rem;">
-                        To associate with clinic <strong id="switchTargetClinicLabel"></strong> and access its patient cases, enter that clinic's 4-digit pass:
+                        To associate with clinic <strong id="switchTargetClinicLabel"></strong> and view its patient cases, enter that clinic's 4-digit pass:
                     </p>
                     <input type="password" id="switchClinicPassInput" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" required style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; font-size:1.25rem; text-align:center; letter-spacing:0.4em;">
                     <div id="switchClinicPassError" class="login-error" style="display:none; margin-top:8px;"></div>
