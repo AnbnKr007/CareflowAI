@@ -744,6 +744,78 @@ body {
     line-height: 1.4;
 }
 
+/* ==========================================================================
+   3 AI SUGGESTED QUESTION BUBBLES INSIDE DOCTOR CHAT
+   ========================================================================== */
+.doc-chat-suggestions-bar {
+    background: #eff6ff;
+    border: 1px dashed #93c5fd;
+    border-radius: 10px;
+    padding: 9px 11px;
+    margin-bottom: 10px;
+}
+
+.doc-suggestions-header {
+    font-size: 0.75rem;
+    color: #1e40af;
+    margin-bottom: 7px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.doc-suggestion-bubbles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.doc-suggestion-bubble-btn {
+    flex: 1 1 240px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    text-align: left;
+    background: #ffffff;
+    color: #0f172a;
+    border: 1.5px solid #60a5fa;
+    border-radius: 16px 16px 16px 4px;
+    padding: 8px 13px;
+    font-size: 0.83rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    box-shadow: 0 2px 5px rgba(37, 99, 235, 0.08);
+    transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.doc-suggestion-bubble-btn:hover:not(:disabled) {
+    background: #dbeafe;
+    border-color: #2563eb;
+    transform: translateY(-1px);
+}
+
+.doc-suggestion-bubble-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.bubble-q-text {
+    flex: 1;
+    line-height: 1.35;
+}
+
+.bubble-send-icon {
+    background: #2563eb;
+    color: #ffffff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
 .chat-input-row {
     display: flex;
     gap: 8px;
@@ -1091,27 +1163,6 @@ body {
     font-size: 0.74rem;
 }
 
-.followup-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.followup-item {
-    background: #f8fafc;
-    border: 1px solid var(--border-color);
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-}
-
 .alert-box {
     background: #fffbeb;
     border: 1px solid #fde68a;
@@ -1335,15 +1386,6 @@ body:not(.clinic-locked) #clinicAuthGate { display: none; }
 .login-back { margin-top: 10px; text-align: center; font-size: 0.85rem; color: #64748b; text-decoration: none; }
 .login-back:hover { text-decoration: underline; }
 .login-note { margin: 10px 0 0; font-size: 0.75rem; color: #64748b; line-height: 1.4; text-align: center; }
-
-.followup-meta { font-size: 0.74rem; color: var(--text-muted); margin: -2px 0 6px; }
-.followup-pending { opacity: 0.8; border-style: dashed; flex-direction: column; align-items: flex-start; gap: 2px; }
-.followup-pending small { color: #b45309; }
-.followup-empty { font-size: 0.82rem; color: var(--text-muted); font-style: italic; }
-.followup-answered { margin-top: 8px; border: 1px solid #bbf7d0; border-radius: 6px; background: #f0fdf4; }
-.followup-answered > summary { cursor: pointer; padding: 6px 10px; font-weight: 700; font-size: 0.8rem; color: #166534; }
-.followup-answered ul { list-style: none; margin: 0; padding: 2px 10px 8px; }
-.followup-answered li { font-size: 0.8rem; padding: 5px 0; border-top: 1px dashed #bbf7d0; }
 
 /* ==========================================================================
    CLINIC PORTAL STYLES (READ-ONLY OVERSIGHT)
