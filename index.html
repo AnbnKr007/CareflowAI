@@ -220,9 +220,17 @@
                 heroGreetingTitle.textContent = 'CareFlow AI Triage Assistant';
                 userGreetingBar.innerHTML = `<span class="text-muted">Not signed in • Set up your profile below</span>`;
                 authCardTitle.textContent = 'First-Time Sign-In / Profile Setup';
-                document.getElementById('authPatientId').value = 'USR-' + Math.floor(1000 + Math.random() * 9000);
+                document.getElementById('authPatientId').value = randomId('USR');
                 clearCookieBtn.style.display = 'none';
             }
+        }
+
+        // Unguessable random ID (e.g. PAT-K7M2QX9P). Replaces 4-digit IDs that collided and could be guessed.
+        function randomId(prefix, len = 8) {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars, no 0/O/1/I confusion
+            const a = new Uint32Array(len);
+            crypto.getRandomValues(a);
+            return prefix + '-' + Array.from(a, n => chars[n % chars.length]).join('');
         }
 
         cookieAuthForm.addEventListener('submit', (e) => {
@@ -235,7 +243,7 @@
                 role,
                 name,
                 userId: role === 'patient'
-                    ? (document.getElementById('authPatientId').value.trim().toUpperCase() || ('USR-' + Math.floor(1000 + Math.random() * 9000)))
+                    ? (document.getElementById('authPatientId').value.trim().toUpperCase() || randomId('USR'))
                     : (existing && existing.role === 'doctor' ? existing.userId : ('DOC-' + Math.floor(100 + Math.random() * 900))),
                 age: document.getElementById('authAge').value || 30,
                 gender: document.getElementById('authGender').value || 'Male',

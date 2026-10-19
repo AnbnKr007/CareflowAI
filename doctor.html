@@ -6,7 +6,28 @@
     <title>Clinician Triage Dashboard — CareFlow AI</title>
     <link rel="stylesheet" href="style.css">
 </head>
-<body class="portal-body">
+<body class="portal-body doctor-locked">
+    <!-- Clinician sign-in (4-digit PIN). The dashboard below stays hidden until signed in. -->
+    <div id="doctorLoginGate" class="doctor-login-gate" role="dialog" aria-modal="true" aria-labelledby="doctorLoginTitle">
+        <form id="doctorLoginForm" class="doctor-login-card" autocomplete="off" novalidate>
+            <div class="login-brand">🩺 CareFlow AI</div>
+            <h2 id="doctorLoginTitle">Clinician Sign-In</h2>
+            <p class="login-sub">Authorised healthcare professionals only.</p>
+
+            <label for="doctorLoginName">Full name</label>
+            <input type="text" id="doctorLoginName" placeholder="Dr. Ananya Sharma" autocomplete="off" required>
+
+            <label for="doctorLoginPin">4-digit PIN</label>
+            <input type="password" id="doctorLoginPin" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" autocomplete="off" required>
+
+            <div id="doctorLoginError" class="login-error" role="alert" style="display: none;"></div>
+
+            <button type="submit" class="primary-btn full-width">Sign in →</button>
+            <a href="index.html" class="login-back">← Back to home</a>
+            <p id="doctorLoginNote" class="login-note"></p>
+        </form>
+    </div>
+
     <!-- Top Clinician Bar -->
     <header class="portal-topbar">
         <div class="topbar-left">
@@ -126,6 +147,7 @@
         </div>
     </div>
 
+    <script src="doctor-auth.js"></script>
     <script src="doctor.js"></script>
 </body>
 </html>

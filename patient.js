@@ -12,6 +12,13 @@ async function fbFetch(url, opts) {
     }
     return res;
 }
+// Unguessable random ID (e.g. PAT-K7M2QX9P). Replaces 4-digit IDs that collided and could be guessed.
+function randomId(prefix, len = 8) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars, no 0/O/1/I confusion
+    const a = new Uint32Array(len);
+    crypto.getRandomValues(a);
+    return prefix + '-' + Array.from(a, n => chars[n % chars.length]).join('');
+}
 function cleanClinicCode(v) { return String(v || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''); }
 
 // Cookie Helpers
@@ -43,7 +50,7 @@ if (!currentUser) {
     currentUser = {
         role: 'patient',
         name: '',
-        userId: 'USR-' + Math.floor(1000 + Math.random() * 9000),
+        userId: randomId('USR'),
         age: '',
         gender: '',
         knownCases: [] // [{ clinicCode, caseId }]
@@ -73,6 +80,9 @@ const refreshMyCasesBtn = document.getElementById('refreshMyCasesBtn');
 let mediaRecorder;
 let audioChunks = [];
 let audioBase64 = null;
+let audioMime = 'audio/webm';
+let recordTimer = null;
+const MAX_RECORD_SECONDS = 120; // auto-stops long recordings
 let imageBase64 = null;
 
 // Populate Greeting & Pre-fill Form from Cookie
@@ -98,6 +108,13 @@ window.setClinicInput = function(code) {
     document.getElementById('clinicCode').value = code;
 };
 
+// Date + time for chat/audit style timestamps (e.g. "18 Oct 2026, 05:12 pm")
+function fmtDateTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function escapeHtml(str) {
     if (!str) return '';
     return String(str)
@@ -111,7 +128,10 @@ function escapeHtml(str) {
 recordBtn.addEventListener('click', async () => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
+        // Use a format this browser really supports (Chrome: webm, Safari: mp4) and remember it
+        const preferredTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+        const chosenType = preferredTypes.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+        mediaRecorder = chosenType ? new MediaRecorder(stream, { mimeType: chosenType }) : new MediaRecorder(stream);
         audioChunks = [];
 
         mediaRecorder.ondataavailable = (event) => {
@@ -119,7 +139,8 @@ recordBtn.addEventListener('click', async () => {
         };
 
         mediaRecorder.onstop = () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            audioMime = (mediaRecorder.mimeType || 'audio/webm').split(';')[0];
+            const audioBlob = new Blob(audioChunks, { type: audioMime });
             audioPreview.src = URL.createObjectURL(audioBlob);
             audioPreview.style.display = 'block';
             clearAudioBtn.style.display = 'inline-block';
@@ -133,9 +154,11 @@ recordBtn.addEventListener('click', async () => {
         };
 
         mediaRecorder.start();
+        clearTimeout(recordTimer);
+        recordTimer = setTimeout(() => { if (!stopRecordBtn.disabled) stopRecordBtn.click(); }, MAX_RECORD_SECONDS * 1000);
         recordBtn.disabled = true;
         stopRecordBtn.disabled = false;
-        recordingStatus.textContent = "● Recording... speak now";
+        recordingStatus.textContent = `● Recording... speak now (auto-stops at ${MAX_RECORD_SECONDS}s)`;
         recordingStatus.style.color = "#ef4444";
     } catch (err) {
         alert("Microphone access denied or unavailable in this browser.");
@@ -143,6 +166,7 @@ recordBtn.addEventListener('click', async () => {
 });
 
 stopRecordBtn.addEventListener('click', () => {
+    clearTimeout(recordTimer);
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
         recordBtn.disabled = false;
@@ -270,7 +294,7 @@ patientForm.addEventListener('submit', async (e) => {
     const patientGender = document.getElementById('patientGender').value;
     const symptomOnset = document.getElementById('symptomOnset').value.trim();
     const rawSymptoms = document.getElementById('symptomsText').value.trim();
-    const caseId = 'PAT-' + Math.floor(1000 + Math.random() * 9000);
+    const caseId = randomId('PAT');
     const nowIso = new Date().toISOString();
 
     // Update Cookie with latest patient identity
@@ -293,6 +317,7 @@ patientForm.addEventListener('submit', async (e) => {
         symptomOnset,
         symptomsText: rawSymptoms,
         audioBase64,
+        audioMime,
         imageBase64,
         timestamp: nowIso
     };
@@ -366,9 +391,27 @@ patientForm.addEventListener('submit', async (e) => {
                     timestamp: nowIso,
                     actor: 'CareFlow AI Triage Engine',
                     action: `Initial triage categorized as ${triagedResult.priority || 'ROUTINE'} → Routed to ${triagedResult.suggestedDepartment || 'General Medicine'}.`
-                }
+                },
+                ...(triagedResult.translationUncertain ? [{
+                    timestamp: nowIso,
+                    actor: 'CareFlow AI Triage Engine',
+                    action: `Flagged uncertain translation/transcription for clinician verification: ${(triagedResult.translationUncertaintyReasons || []).join('; ') || 'see original sources'}.`
+                }] : [])
             ]
         };
+
+        // 0. Store the voice note in a separate node (keeps the doctor's queue light) so clinicians can play it back
+        if (audioBase64) {
+            try {
+                await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/media/${caseId}.json`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ audio: `data:${audioMime};base64,${audioBase64}`, mime: audioMime, savedAt: nowIso })
+                });
+            } catch (mediaErr) {
+                console.warn('Voice note could not be stored for playback:', mediaErr.message);
+            }
+        }
 
         // 1. Save to Clinic Queue in Firebase
         await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
@@ -399,7 +442,7 @@ patientForm.addEventListener('submit', async (e) => {
         statusMessage.innerHTML = `
             <strong>✅ Case Submitted Successfully!</strong><br>
             Case ID: <span class="code-pill">${caseId}</span> | Clinic: <strong>${clinicCode}</strong><br>
-            ${triagedResult.aiFallback ? '<span style="color:#b45309;">⚠️ AI analysis failed (' + escapeHtml(triagedResult.uncertaintyNotes[0]) + ')</span><br>' : ''}AI Triage Priority: <strong>${triagedResult.priority || 'ROUTINE'}</strong> → Routed to <strong>${triagedResult.suggestedDepartment || 'General Medicine'}</strong>
+            ${triagedResult.aiFallback ? '<span style="color:#b45309;">⚠️ AI analysis failed (' + escapeHtml(triagedResult.uncertaintyNotes[0]) + ')</span><br>' : ''}Sent to the <strong>${escapeHtml(triagedResult.suggestedDepartment || 'General Medicine')}</strong> team for review by a qualified healthcare professional.<br><small>If your symptoms get worse, call <strong>112</strong> or go to the nearest hospital.</small>
         `;
         statusMessage.style.display = 'block';
 
@@ -504,19 +547,18 @@ async function loadPatientCasesByClinic(silent = false) {
 // Render an Individual Patient Case Card with Doctor Updates, Closure Request Banner, & Live Chat
 function renderPatientCaseCard(caseData) {
     const card = document.createElement('div');
-    const priority = (caseData.triage && caseData.triage.priority) || 'ROUTINE';
     const isDissolved = caseData.status === 'DISSOLVED';
     const isClosureRequested = caseData.status === 'CLOSURE_REQUESTED';
     const isEmergency = caseData.status === 'EMERGENCY_DISPATCHED' || !!caseData.paramedicDispatch;
 
-    card.className = `patient-case-card priority-${priority.toLowerCase()} ${isDissolved ? 'case-dissolved' : ''}`;
+    card.className = `patient-case-card ${isDissolved ? 'case-dissolved' : ''}`;
 
     const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
     const chatHtml = messages.map(m => `
         <div class="chat-bubble ${m.senderRole === 'doctor' ? 'chat-doctor' : (m.senderRole === 'system' ? 'chat-system' : 'chat-patient')}">
             <div class="chat-meta">
                 <strong>${escapeHtml(m.senderName)}</strong>
-                <span>${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>${fmtDateTime(m.timestamp)}</span>
             </div>
             <div class="chat-text">${escapeHtml(m.text)}</div>
         </div>
@@ -529,7 +571,6 @@ function renderPatientCaseCard(caseData) {
                 <span class="dept-tag">${escapeHtml(caseData.triage?.suggestedDepartment || 'General Medicine')}</span>
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
-                <span class="priority-badge">${escapeHtml(priority)}</span>
                 <span class="status-pill status-${(caseData.status || 'PENDING_REVIEW').toLowerCase()}">${escapeHtml(caseData.status.replace(/_/g, ' '))}</span>
             </div>
         </div>
@@ -569,7 +610,7 @@ function renderPatientCaseCard(caseData) {
         <div class="chat-section">
             <div class="chat-header-bar">
                 <span>💬 Consultation Thread (${messages.length})</span>
-                <small class="text-muted">AI updates priority dynamically based on your replies</small>
+                <small class="text-muted">Your replies are reviewed by AI and your care team</small>
             </div>
             <div class="chat-messages-box" id="chatBox_${caseData.id}">
                 ${chatHtml || '<p class="text-muted">No messages yet.</p>'}
@@ -597,6 +638,24 @@ function renderPatientCaseCard(caseData) {
     return card;
 }
 
+// ---- Dynamic follow-up questions: shared helpers --------------------------------------------
+// caseData.followUps = { active: [unasked suggestions], history: [{question,status,askedAt,answeredAt,answer}], updatedAt }
+// Cases created before this feature fall back to the intake suggestions (triage.followUpQuestions).
+function getFollowUpState(caseData) {
+    const fu = caseData.followUps || null;
+    const history = fu && Array.isArray(fu.history) ? fu.history : [];
+    const active = fu
+        ? (Array.isArray(fu.active) ? fu.active : [])
+        : (Array.isArray(caseData.triage?.followUpQuestions) ? caseData.triage.followUpQuestions : []);
+    return { active, history };
+}
+
+function sameQuestion(a, b) {
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+    const x = norm(a), y = norm(b);
+    return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+}
+
 // Patient Sends a Chat Reply under a Specific Case (Triggers AI Summary & Dynamic Priority Shift)
 window.sendPatientChatMessage = async function(clinicCode, caseId) {
     const inputEl = document.getElementById(`chatInput_${caseId}`);
@@ -622,6 +681,8 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             timestamp: nowIso
         });
 
+        const fuState = getFollowUpState(caseData);
+
         // Call AI backend in 'chat_update' mode to summarize follow-up & re-evaluate priority
         let chatAiResult = null;
         try {
@@ -636,7 +697,9 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
                         currentPriority: caseData.triage?.priority || 'ROUTINE',
                         suggestedDepartment: caseData.triage?.suggestedDepartment || 'General Medicine',
                         clinicalSummary: caseData.triage?.clinicalSummary || caseData.symptomsText,
-                        standardizedSymptoms: caseData.triage?.standardizedSymptoms || []
+                        standardizedSymptoms: caseData.triage?.standardizedSymptoms || [],
+                        askedQuestions: fuState.history.map(h => ({ question: h.question, status: h.status, answer: h.answer || '' })),
+                        activeQuestions: fuState.active
                     },
                     messages,
                     latestPatientMessage: text
@@ -704,12 +767,35 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             ];
         }
 
+        // --- Dynamic follow-up questions ---------------------------------------------------------
+        // 1) Questions the doctor asked are now answered by this reply
+        const newHistory = fuState.history.map(h => h.status === 'ASKED'
+            ? { ...h, status: 'ANSWERED', answeredAt: nowIso, answer: text.slice(0, 200) }
+            : h);
+        const answeredNow = fuState.history.filter(h => h.status === 'ASKED').length;
+        // 2) Replace the suggestions with the AI's fresh ones (or keep the unasked ones if the AI could not refresh)
+        const aiRefreshed = Array.isArray(chatAiResult.followUpQuestions);
+        const newActive = (aiRefreshed ? chatAiResult.followUpQuestions : fuState.active)
+            .filter(q => typeof q === 'string' && q.trim() && !newHistory.some(h => sameQuestion(h.question, q)));
+        const newFollowUps = {
+            active: newActive,
+            history: newHistory,
+            updatedAt: aiRefreshed ? nowIso : ((caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp || nowIso)
+        };
+
         const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
         auditLog.push({
             timestamp: nowIso,
             actor: `Patient (${caseData.patientName})`,
             action: `Sent chat reply: "${text.substring(0, 80)}"`
         });
+        if (aiRefreshed) {
+            auditLog.push({
+                timestamp: nowIso,
+                actor: 'CareFlow AI Re-Triage',
+                action: `Refreshed follow-up questions from the patient's reply (${newActive.length} suggested${answeredNow ? ', ' + answeredNow + ' asked question' + (answeredNow > 1 ? 's' : '') + ' answered' : ''}).`
+            });
+        }
 
         if (newPriority !== oldPriority) {
             auditLog.push({
@@ -730,6 +816,7 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
                 triage: updatedTriage,
                 chatAiSummary: (chatAiResult.chatSummary || `Patient update: ${text}`) + deescalationNote,
                 queueScore: newQueueScore,
+                followUps: newFollowUps,
                 auditLog
             })
         });
@@ -815,6 +902,7 @@ window.withdrawPatientCase = async function(clinicCode, caseId) {
 
     try {
         await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, { method: 'DELETE' });
+        await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/media/${caseId}.json`, { method: 'DELETE' });
         await fbFetch(`${FIREBASE_URL}/patients/${currentUser.userId}/cases/${caseId}.json`, { method: 'DELETE' });
 
         currentUser.knownCases = (currentUser.knownCases || []).filter(c => !(c.caseId === caseId && c.clinicCode === clinicCode));
