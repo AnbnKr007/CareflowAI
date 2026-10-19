@@ -7,24 +7,26 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="portal-body doctor-locked">
-    <!-- Clinician sign-in (4-digit PIN). The dashboard below stays hidden until signed in. -->
-    <div id="doctorLoginGate" class="doctor-login-gate" role="dialog" aria-modal="true" aria-labelledby="doctorLoginTitle">
+    <!-- Clinician sign-in (Requires Clinic Code & Pass) -->
+    <div id="doctorLoginGate" class="doctor-login-gate" role="dialog" aria-modal="true">
         <form id="doctorLoginForm" class="doctor-login-card" autocomplete="off" novalidate>
             <div class="login-brand">🩺 CareFlow AI</div>
             <h2 id="doctorLoginTitle">Clinician Sign-In</h2>
-            <p class="login-sub">Authorised healthcare professionals only.</p>
+            <p class="login-sub">Access requires your Clinic's Code and 4-Digit Pass.</p>
 
-            <label for="doctorLoginName">Full name</label>
-            <input type="text" id="doctorLoginName" placeholder="Dr. Ananya Sharma" autocomplete="off" required>
+            <label for="doctorLoginName">Your Full Name</label>
+            <input type="text" id="doctorLoginName" placeholder="Dr. Ananya Sharma" required>
 
-            <label for="doctorLoginPin">4-digit PIN</label>
-            <input type="password" id="doctorLoginPin" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" autocomplete="off" required>
+            <label for="doctorClinicCode">Clinic Code</label>
+            <input type="text" id="doctorClinicCode" placeholder="e.g. CARE-101" style="text-transform: uppercase;" required>
+
+            <label for="doctorClinicPass">Clinic 4-Digit Pass</label>
+            <input type="password" id="doctorClinicPass" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" required>
 
             <div id="doctorLoginError" class="login-error" role="alert" style="display: none;"></div>
 
-            <button type="submit" class="primary-btn full-width">Sign in →</button>
+            <button type="submit" class="primary-btn full-width">Verify &amp; Sign in →</button>
             <a href="index.html" class="login-back">← Back to home</a>
-            <p id="doctorLoginNote" class="login-note"></p>
         </form>
     </div>
 
@@ -35,30 +37,21 @@
             <span class="badge badge-doctor">🩺 Clinician Triage Console</span>
         </div>
         <div id="doctorGreetingHeader" class="topbar-right">
-            <!-- Populated from Cookie -->
+            <!-- Populated dynamically -->
         </div>
     </header>
 
-    <!-- Clinic & Department Switcher Bar -->
+    <!-- Queue Control Bar (Clinic Switcher removed, locked to authenticated Clinic) -->
     <section class="clinic-control-bar">
         <form id="doctorFilterForm" class="clinic-switcher-form">
             <div class="switcher-item">
                 <label for="docNameInput">Attending Clinician</label>
-                <input type="text" id="docNameInput" placeholder="Dr. Ananya Sharma" required>
+                <input type="text" id="docNameInput" required>
             </div>
 
             <div class="switcher-item">
                 <label for="docClinicCode">Active Clinic Code</label>
-                <div style="display:flex; gap:6px;">
-                    <input type="text" id="docClinicCode" placeholder="e.g. CARE-101" value="CARE-101" required style="width: 130px;">
-                    <select id="quickClinicSelect" title="Quick Switch Clinic" style="width: 135px;">
-                        <option value="">Switch Clinic...</option>
-                        <option value="CARE-101">CARE-101 (Main)</option>
-                        <option value="CITY-202">CITY-202 (Metro)</option>
-                        <option value="METRO-303">METRO-303 (Trauma)</option>
-                        <option value="AIIMS-DEL">AIIMS-DEL</option>
-                    </select>
-                </div>
+                <input type="text" id="docClinicCode" readonly style="background: #f1f5f9; cursor: not-allowed; font-weight: bold;">
             </div>
 
             <div class="switcher-item">
@@ -75,7 +68,7 @@
                     <option value="Gastroenterology">Gastroenterology</option>
                     <option value="Dermatology">Dermatology</option>
                     <option value="Psychiatry">Psychiatry</option>
-                    <option value="Obstetrics & Gynecology">Obstetrics &amp; Gynecology (OB-GYN)</option>
+                    <option value="Obstetrics & Gynecology">Obstetrics &amp; Gynecology</option>
                     <option value="ENT">ENT (Otolaryngology)</option>
                     <option value="Nephrology">Nephrology</option>
                     <option value="Oncology">Oncology</option>
@@ -94,7 +87,7 @@
             </div>
 
             <div class="switcher-actions">
-                <button type="submit" class="primary-btn">Load Queue</button>
+                <button type="submit" class="primary-btn">Update Filter</button>
                 <button type="button" id="refreshQueueBtn" class="override-btn">↻ Sync</button>
             </div>
         </form>
@@ -115,15 +108,13 @@
         </div>
     </main>
 
-    <!-- Modal 1: Priority Downgrade Confirmation Modal (Reddit-style Arrow Guardrail) -->
+    <!-- Modals (Unchanged from original) -->
     <div id="priorityConfirmModal" class="modal-overlay" style="display: none;">
         <div class="modal-card">
             <div class="modal-header warning-header">
                 <h3>⚠️ Confirm Priority Reclassification</h3>
             </div>
-            <div class="modal-body" id="priorityConfirmBody">
-                <!-- Populated dynamically -->
-            </div>
+            <div class="modal-body" id="priorityConfirmBody"></div>
             <div class="modal-actions">
                 <button type="button" id="confirmPriorityChangeBtn" class="approve-btn">Confirm &amp; Change Priority</button>
                 <button type="button" id="cancelPriorityChangeBtn" class="override-btn">Cancel</button>
@@ -131,17 +122,14 @@
         </div>
     </div>
 
-    <!-- Modal 2: Emergency Paramedic Team Dispatch Popup -->
     <div id="paramedicModal" class="modal-overlay" style="display: none;">
         <div class="modal-card paramedic-modal-card">
             <div class="modal-header emergency-header">
                 <h3>🚨 Hospital Paramedic Rapid Response Dispatch</h3>
             </div>
-            <div class="modal-body" id="paramedicModalBody">
-                <!-- Populated dynamically with patient details -->
-            </div>
+            <div class="modal-body" id="paramedicModalBody"></div>
             <div class="modal-actions">
-                <button type="button" id="confirmParamedicDispatchBtn" class="emergency-btn">🚑 Transmit Patient Packet to Paramedic Unit</button>
+                <button type="button" id="confirmParamedicDispatchBtn" class="emergency-btn">🚑 Transmit Patient Packet</button>
                 <button type="button" id="closeParamedicModalBtn" class="override-btn">Close</button>
             </div>
         </div>
