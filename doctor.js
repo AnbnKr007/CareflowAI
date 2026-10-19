@@ -1,63 +1,44 @@
-// Firebase Realtime Database URL (without trailing slash)
+// Firebase Realtime Database URL
 const FIREBASE_URL = "https://careflowai-2bd8b-default-rtdb.firebaseio.com";
 
-// Firebase fetch wrapper: fetch() does NOT throw on 401/403, so a locked-down DB
-// would silently "succeed". This makes permission/network failures visible.
 async function fbFetch(url, opts) {
     const res = await fetch(url, opts);
     if (!res.ok) {
-        throw new Error(res.status === 401 || res.status === 403
-            ? `Firebase rejected the request (${res.status}). Open Firebase Console > Realtime Database > Rules and allow read/write.`
-            : `Firebase error ${res.status}`);
+        throw new Error(`Firebase error ${res.status}`);
     }
     return res;
 }
 function cleanClinicCode(v) { return String(v || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''); }
 
-// Cookie Helpers
 function setCookie(name, value, days = 30) {
-    const d = new Date();
-    d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+    const d = new Date(); d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
     document.cookie = `${name}=${encodeURIComponent(JSON.stringify(value))};expires=${d.toUTCString()};path=/;SameSite=Lax`;
     try { localStorage.setItem(name, JSON.stringify(value)); } catch (e) {}
 }
 
 function getCookie(name) {
-    const nameEQ = name + "=";
-    const ca = document.cookie.split(';');
+    const nameEQ = name + "="; const ca = document.cookie.split(';');
     for (let i = 0; i < ca.length; i++) {
         let c = ca[i].trim();
-        if (c.indexOf(nameEQ) === 0) {
-            try { return JSON.parse(decodeURIComponent(c.substring(nameEQ.length))); } catch (e) {}
-        }
+        if (c.indexOf(nameEQ) === 0) { try { return JSON.parse(decodeURIComponent(c.substring(nameEQ.length))); } catch (e) {} }
     }
-    try {
-        const local = localStorage.getItem(name);
-        return local ? JSON.parse(local) : null;
-    } catch (e) { return null; }
+    return null;
 }
 
 function escapeHtml(str) {
     if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Load or Initialize Doctor Cookie Session
-let currentUser = getCookie('careflow_user');
-if (!currentUser || currentUser.role !== 'doctor') {
+let currentUser = getCookie('careflow_user') || {};
+if (currentUser.role !== 'doctor') {
     currentUser = {
         role: 'doctor',
-        name: currentUser?.name || 'Dr. Ananya Sharma',
-        userId: currentUser?.userId || ('DOC-' + Math.floor(100 + Math.random() * 900)),
-        clinicCode: currentUser?.clinicCode || 'CARE-101',
-        department: currentUser?.department || 'All',
-        savedClinics: ['CARE-101', 'CITY-202', 'METRO-303', 'AIIMS-DEL']
+        name: currentUser.name || 'Dr. Ananya Sharma',
+        userId: currentUser.userId || ('DOC-' + Math.floor(100 + Math.random() * 900)),
+        clinicCode: '',
+        department: 'All'
     };
-    setCookie('careflow_user', currentUser, 30);
 }
 
 // DOM Elements
@@ -65,7 +46,6 @@ const doctorGreetingHeader = document.getElementById('doctorGreetingHeader');
 const doctorFilterForm = document.getElementById('doctorFilterForm');
 const docNameInput = document.getElementById('docNameInput');
 const docClinicCode = document.getElementById('docClinicCode');
-const quickClinicSelect = document.getElementById('quickClinicSelect');
 const docDepartment = document.getElementById('docDepartment');
 const docStatusFilter = document.getElementById('docStatusFilter');
 const refreshQueueBtn = document.getElementById('refreshQueueBtn');
@@ -76,68 +56,55 @@ const priorityConfirmModal = document.getElementById('priorityConfirmModal');
 const priorityConfirmBody = document.getElementById('priorityConfirmBody');
 const confirmPriorityChangeBtn = document.getElementById('confirmPriorityChangeBtn');
 const cancelPriorityChangeBtn = document.getElementById('cancelPriorityChangeBtn');
-
 const paramedicModal = document.getElementById('paramedicModal');
 const paramedicModalBody = document.getElementById('paramedicModalBody');
 const confirmParamedicDispatchBtn = document.getElementById('confirmParamedicDispatchBtn');
 const closeParamedicModalBtn = document.getElementById('closeParamedicModalBtn');
 
-let currentClinic = currentUser.clinicCode || 'CARE-101';
+let currentClinic = '';
 let currentDepartment = currentUser.department || 'All';
-let currentCasesList = []; // Ordered list currently displayed
+let currentCasesList = []; 
 let pendingPriorityConfirmation = null;
 let pendingParamedicCase = null;
-
-const PRIORITY_TIER_WEIGHT = {
-    CRITICAL: 3,
-    URGENT: 2,
-    ROUTINE: 1
-};
 
 function initDoctorProfileBar() {
     docNameInput.value = currentUser.name || 'Dr. Sharma';
     docClinicCode.value = currentClinic;
     docDepartment.value = currentDepartment;
 
-    const displayDocName = currentUser.name.toLowerCase().startsWith('dr')
-        ? currentUser.name
-        : `Dr. ${currentUser.name}`;
+    const displayDocName = currentUser.name.toLowerCase().startsWith('dr') ? currentUser.name : `Dr. ${currentUser.name}`;
 
     doctorGreetingHeader.innerHTML = `
         <span class="user-chip">
-            🩺 Welcome, <strong>${escapeHtml(displayDocName)}</strong>
-            <small>(${escapeHtml(currentUser.userId)} • Clinic: ${escapeHtml(currentClinic)})</small>
+            🩺 <strong>${escapeHtml(displayDocName)}</strong>
+            <small>(${escapeHtml(currentUser.userId)} • Locked to ${escapeHtml(currentClinic)})</small>
         </span>
-        <a href="index.html" class="ghost-btn sm-btn">Switch Role / Profile</a>
-        <button type="button" class="ghost-btn sm-btn" onclick="CareFlowDoctorAuth.signOut()">Sign out</button>
+        <button type="button" class="ghost-btn sm-btn" onclick="CareFlowDoctorAuth.signOut()">Sign out &amp; Switch Clinic</button>
     `;
-
-    // Populate saved clinics in quick switcher
-    const clinics = Array.from(new Set([...(currentUser.savedClinics || []), currentClinic, 'CARE-101', 'CITY-202', 'METRO-303']));
-    quickClinicSelect.innerHTML = `<option value="">Switch Clinic...</option>` +
-        clinics.map(c => `<option value="${escapeHtml(c)}" ${c === currentClinic ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
 }
 
-quickClinicSelect.addEventListener('change', () => {
-    if (quickClinicSelect.value) {
-        docClinicCode.value = quickClinicSelect.value;
-        doctorFilterForm.dispatchEvent(new Event('submit'));
-    }
-});
+// Push doctor's presence to the Clinic Dashboard
+async function updateDoctorPresence() {
+    if (!currentClinic || !currentUser.userId) return;
+    try {
+        const docName = docNameInput.value.trim() || currentUser.name;
+        await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/doctors/${currentUser.userId}.json`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: docName.toLowerCase().startsWith('dr') ? docName : `Dr. ${docName}`,
+                department: currentDepartment,
+                lastActive: new Date().toISOString()
+            })
+        });
+    } catch(e) { console.warn('Could not update doctor presence', e); }
+}
 
 doctorFilterForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    currentClinic = cleanClinicCode(docClinicCode.value) || 'CARE-101';
     currentDepartment = docDepartment.value;
-    const docName = docNameInput.value.trim() || 'Dr. Sharma';
-
-    currentUser.name = docName;
-    currentUser.clinicCode = currentClinic;
+    currentUser.name = docNameInput.value.trim() || 'Dr. Sharma';
     currentUser.department = currentDepartment;
-    if (!Array.isArray(currentUser.savedClinics)) currentUser.savedClinics = [];
-    if (!currentUser.savedClinics.includes(currentClinic)) {
-        currentUser.savedClinics.push(currentClinic);
-    }
     setCookie('careflow_user', currentUser, 30);
     initDoctorProfileBar();
     fetchCloudQueue();
@@ -147,6 +114,48 @@ refreshQueueBtn.addEventListener('click', () => fetchCloudQueue());
 docDepartment.addEventListener('change', () => doctorFilterForm.dispatchEvent(new Event('submit')));
 docStatusFilter.addEventListener('change', () => fetchCloudQueue());
 
+// Ensure presence is broadcasted when queue loads
+const originalFetchCloudQueue = fetchCloudQueue;
+fetchCloudQueue = async function(silent = false) {
+    if (typeof originalFetchCloudQueue === 'function') {
+        updateDoctorPresence();
+        await originalFetchCloudQueue(silent);
+    }
+};
+
+let dashboardStarted = false;
+function startDoctorDashboard(loginName, loginClinic) {
+    if (dashboardStarted) return;
+    dashboardStarted = true;
+
+    if (loginName) currentUser.name = loginName;
+    if (loginClinic) {
+        currentUser.clinicCode = loginClinic;
+        currentClinic = loginClinic;
+    } else {
+        const session = CareFlowDoctorAuth.getSession();
+        currentClinic = session?.clinicCode || currentUser.clinicCode || 'UNKNOWN';
+    }
+    setCookie('careflow_user', currentUser, 30);
+
+    initDoctorProfileBar();
+    fetchCloudQueue();
+
+    setInterval(() => {
+        const modalOpen = priorityConfirmModal.style.display !== 'none' || paramedicModal.style.display !== 'none';
+        const typing = Array.from(document.querySelectorAll('.chat-input-row input')).some(i => i.value || i === document.activeElement);
+        const editing = Array.from(document.querySelectorAll('.referral-note-box textarea')).some(t => t.value !== t.defaultValue || t === document.activeElement);
+        const playing = Array.from(document.querySelectorAll('audio')).some(a => !a.paused && !a.ended);
+        if (!modalOpen && !typing && !editing && !playing && !document.hidden) fetchCloudQueue(true);
+    }, 10000);
+}
+
+if (window.CareFlowDoctorAuth && window.CareFlowDoctorAuth.isAuthenticated()) {
+    const s = CareFlowDoctorAuth.getSession();
+    startDoctorDashboard(s.name, s.clinicCode);
+} else {
+    window.addEventListener('careflow-doctor-login', (e) => startDoctorDashboard(e.detail?.name, e.detail?.clinicCode), { once: true });
+}
 // Sort comparator: strictly by Priority Tier (CRITICAL > URGENT > ROUTINE), then by manualOrderOffset (high to low), then newest timestamp
 function sortCasesByPriority(cases) {
     return cases.sort((a, b) => {
