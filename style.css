@@ -164,7 +164,7 @@ body {
 
 .role-selection {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 24px;
 }
 
@@ -1239,3 +1239,47 @@ body:not(.doctor-locked) #doctorLoginGate { display: none; }
 .followup-answered > summary { cursor: pointer; padding: 6px 10px; font-weight: 700; font-size: 0.8rem; color: #166534; }
 .followup-answered ul { list-style: none; margin: 0; padding: 2px 10px 8px; }
 .followup-answered li { font-size: 0.8rem; padding: 5px 0; border-top: 1px dashed #bbf7d0; }
+.badge-clinic {
+    background: #ede9fe;
+    color: #5b21b6;
+}
+
+.clinic-portal-card {
+    border-top: 5px solid #8b5cf6;
+}
+
+.clinic-auth-toggle {
+    display: flex; 
+    gap: 15px; 
+    margin-bottom: 12px; 
+    font-size: 0.9rem; 
+    font-weight: 600; 
+    justify-content: center;
+    background: #f8fafc;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.clinic-auth-toggle label {
+    margin: 0 !important;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+body.clinic-locked > *:not(#clinicLoginGate):not(script) { display: none !important; }
+body:not(.clinic-locked) #clinicLoginGate { display: none; }
+
+.clinic-item-row {
+    background: #f8fafc;
+    border: 1px solid var(--border-color);
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.88rem;
+}
