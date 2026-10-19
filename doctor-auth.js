@@ -1,20 +1,20 @@
 // =============================================================================
 // CareFlow AI - Clinician Sign-In & Clinic Association Gate
 //
-// Doctors signing in to be associated with any clinic MUST provide:
-//   1. Doctor's Full Name (& Primary Department)
+// Doctors sign in with:
+//   1. Doctor Full Name
 //   2. Registered Clinic Code
-//   3. The Clinic's 4-Digit Passcode
+//   3. Clinic's 4-Digit Passcode
 //
-// Upon verification against Firebase (/clinics/{clinicCode}/info.json), the
-// doctor is registered in /clinics/{clinicCode}/doctors/{docId}.json and
-// granted access to that clinic's patient case database.
+// Verifies against /clinics/{clinicCode}/info.json in Firebase, registers the
+// doctor under /clinics/{clinicCode}/doctors/{doctorId}.json, and unlocks all
+// cases across all departments for that clinic.
 // =============================================================================
 
 (function () {
     const FIREBASE_URL = "https://careflowai-2bd8b-default-rtdb.firebaseio.com";
-    const SESSION_KEY = 'careflow_doctor_session';
-    const SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000; // 8 hours
+    const SESSION_KEY = 'careflow_doctor_session_v2';
+    const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours
     let memorySession = null;
 
     function cleanClinicCode(v) {
@@ -22,7 +22,12 @@
     }
 
     function normalizeDoctorName(name) {
-        return String(name || '').toLowerCase().replace(/\./g, ' ').replace(/\s+/g, ' ').trim().replace(/^dr\s+/, '');
+        return String(name || '')
+            .toLowerCase()
+            .replace(/\./g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/^dr\s+/, '');
     }
 
     function buildDoctorId(name) {
@@ -53,7 +58,21 @@
         return 'fnv1a_' + (h >>> 0).toString(16);
     }
 
-    // ---------- Session Management ----------
+    function saveDoctorCookieProfile(sessionObj) {
+        const profile = {
+            role: 'doctor',
+            name: sessionObj.name,
+            userId: sessionObj.doctorId,
+            clinicCode: sessionObj.clinicCode,
+            department: 'All',
+            savedClinics: Object.keys(sessionObj.unlockedClinics || { [sessionObj.clinicCode]: true })
+        };
+        const d = new Date();
+        d.setTime(d.getTime() + (30 * 24 * 60 * 60 * 1000));
+        document.cookie = `careflow_user=${encodeURIComponent(JSON.stringify(profile))};expires=${d.toUTCString()};path=/;SameSite=Lax`;
+        try { localStorage.setItem('careflow_user', JSON.stringify(profile)); } catch (e) {}
+    }
+
     function getSession() {
         let s = null;
         try {
@@ -61,9 +80,7 @@
             if (raw) s = JSON.parse(raw);
         } catch (e) {}
         if (!s) s = memorySession;
-        if (!s || !s.name || !s.clinicCode || !s.unlockedClinics || !s.unlockedClinics[s.clinicCode] || !s.loginAt) {
-            return null;
-        }
+        if (!s || !s.name || !s.clinicCode || !s.loginAt) return null;
         if (Date.now() - s.loginAt > SESSION_MAX_AGE_MS) return null;
         return s;
     }
@@ -71,15 +88,18 @@
     function setSession(s) {
         memorySession = s;
         try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch (e) {}
+        saveDoctorCookieProfile(s);
     }
 
     function clearSession() {
         memorySession = null;
-        try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+        try {
+            sessionStorage.removeItem(SESSION_KEY);
+            sessionStorage.removeItem('careflow_doctor_session');
+        } catch (e) {}
     }
 
-    // ---------- Verify Clinic Code + 4-Digit Pass & Associate Doctor ----------
-    async function verifyClinicAndAssociateDoctor(name, clinicCodeRaw, pin, department = 'All') {
+    async function verifyClinicAndAssociateDoctor(name, clinicCodeRaw, pin) {
         const normName = normalizeDoctorName(name);
         if (!normName) {
             return { ok: false, reason: 'Please enter your full name.' };
@@ -88,43 +108,40 @@
         if (!clinicCode) {
             return { ok: false, reason: 'Please enter a valid Clinic Code.' };
         }
-        if (!/^\d{4}$/.test(String(pin))) {
-            return { ok: false, reason: 'Clinic Pass must be进而 exactly 4 digits.' };
+        const cleanPin = String(pin || '').trim();
+        if (!/^\d{4}$/.test(cleanPin)) {
+            return { ok: false, reason: 'Clinic Pass must be exactly 4 digits.' };
         }
 
-        // 1. Fetch registered clinic credentials from Firebase
         let clinicInfo = null;
         try {
             const res = await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/info.json`);
             if (!res.ok) {
-                return { ok: false, reason: `Could not reach clinic database (${res.status}).` };
+                return { ok: false, reason: `Could not reach Firebase (${res.status}).` };
             }
             clinicInfo = await res.json();
         } catch (err) {
-            return { ok: false, reason: 'Network error verifying clinic credentials: ' + err.message };
+            return { ok: false, reason: 'Network error verifying clinic: ' + err.message };
         }
 
-        if (!clinicInfo || (!clinicInfo.passHash && !clinicInfo.passcode)) {
+        if (!clinicInfo || (!clinicInfo.passcode && !clinicInfo.passHash)) {
             return {
                 ok: false,
-                reason: `Clinic "${clinicCode}" is not registered yet. Please register the clinic and set its 4-digit pass on the Clinic Portal first.`
+                reason: `Clinic "${clinicCode}" is not registered yet. Please register "${clinicCode}" on the Clinic Portal first.`
             };
         }
 
-        // 2. Verify 4-digit Clinic Passcode
-        const enteredHash = await hashClinicPass(clinicCode, pin);
-        const passMatched =
-            (clinicInfo.passHash && clinicInfo.passHash === enteredHash) ||
-            (clinicInfo.passcode && String(clinicInfo.passcode) === String(pin));
+        const enteredHash = await hashClinicPass(clinicCode, cleanPin);
+        const directMatch = clinicInfo.passcode && String(clinicInfo.passcode).trim() === cleanPin;
+        const hashMatch = clinicInfo.passHash && clinicInfo.passHash === enteredHash;
 
-        if (!passMatched) {
+        if (!directMatch && !hashMatch) {
             return {
                 ok: false,
-                reason: `Incorrect 4-digit pass for clinic "${clinicCode}". Access to clinic cases denied.`
+                reason: `Incorrect 4-digit pass for clinic "${clinicCode}".`
             };
         }
 
-        // 3. Register / Update this Doctor under the Clinic's Doctor Roster in Firebase
         const doctorId = buildDoctorId(name);
         const displayName = formatDoctorDisplayName(name);
         const nowIso = new Date().toISOString();
@@ -136,10 +153,11 @@
             const docRecord = {
                 id: doctorId,
                 name: displayName,
-                department: department || (existingDoc && existingDoc.department) || 'All',
+                department: 'All Departments',
                 clinicCode,
                 joinedAt: (existingDoc && existingDoc.joinedAt) ? existingDoc.joinedAt : nowIso,
-                lastActiveAt: nowIso
+                lastActiveAt: nowIso,
+                lastAction: (existingDoc && existingDoc.lastAction) ? existingDoc.lastAction : 'Signed in to clinic console'
             };
 
             await fetch(`${FIREBASE_URL}/clinics/${clinicCode}/doctors/${doctorId}.json`, {
@@ -156,8 +174,7 @@
             doctorId,
             displayName,
             clinicCode,
-            clinicName: clinicInfo.clinicName || clinicCode,
-            department: department || 'All'
+            clinicName: clinicInfo.clinicName || clinicCode
         };
     }
 
@@ -184,13 +201,17 @@
         isClinicUnlocked: (clinicCode) => {
             const s = getSession();
             const code = cleanClinicCode(clinicCode);
-            return !!(s && s.unlockedClinics && s.unlockedClinics[code]);
+            if (!s) return false;
+            if (cleanClinicCode(s.clinicCode) === code) return true;
+            return !!(s.unlockedClinics && s.unlockedClinics[code]);
         },
         getUnlockedClinics: () => {
             const s = getSession();
-            return (s && s.unlockedClinics) ? Object.keys(s.unlockedClinics) : [];
+            if (!s) return [];
+            const map = { ...(s.unlockedClinics || {}), [s.clinicCode]: true };
+            return Object.keys(map).filter(Boolean);
         },
-        markClinicUnlocked: (clinicCode, clinicName, doctorName, department, doctorId) => {
+        markClinicUnlocked: (clinicCode, clinicName, doctorName, doctorId) => {
             const s = getSession() || { unlockedClinics: {}, loginAt: Date.now() };
             const code = cleanClinicCode(clinicCode);
             if (!s.unlockedClinics) s.unlockedClinics = {};
@@ -202,28 +223,23 @@
             s.clinicCode = code;
             s.clinicName = clinicName || code;
             if (doctorName) s.name = doctorName;
-            if (department) s.department = department;
             if (doctorId) s.doctorId = doctorId;
             setSession(s);
         },
-        _reload: () => window.location.reload(),
         signOut() {
             clearSession();
-            api._reload();
+            window.location.reload();
         }
     };
     window.CareFlowDoctorAuth = api;
 
-    // Already authenticated with a verified clinic pass in this session -> unlock
     if (getSession()) {
         unlock();
         return;
     }
 
-    // ---------- Sign-In Form Wiring ----------
     const form = document.getElementById('doctorLoginForm');
     const nameInput = document.getElementById('doctorLoginName');
-    const deptSelect = document.getElementById('doctorLoginDept');
     const clinicInput = document.getElementById('doctorLoginClinicCode');
     const pinInput = document.getElementById('doctorLoginPin');
     const submitBtn = document.getElementById('doctorLoginSubmitBtn');
@@ -235,10 +251,11 @@
     if (savedProfile) {
         if (savedProfile.role === 'doctor' && savedProfile.name) nameInput.value = savedProfile.name;
         if (savedProfile.clinicCode) clinicInput.value = savedProfile.clinicCode;
-        if (savedProfile.department && deptSelect) deptSelect.value = savedProfile.department;
     }
 
-    noteBox.textContent = 'Access is restricted: only doctors with a registered Clinic Code and its 4-digit pass can access clinic cases.';
+    if (noteBox) {
+        noteBox.textContent = 'Doctors associated with a clinic can view and attend to all cases across all departments in that clinic.';
+    }
 
     function showError(msg) {
         errorBox.textContent = msg;
@@ -257,17 +274,20 @@
         errorBox.style.display = 'none';
 
         const name = nameInput.value.trim();
-        const dept = deptSelect ? deptSelect.value : 'All';
         const clinicCode = cleanClinicCode(clinicInput.value);
         const pin = pinInput.value.trim();
 
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Verifying Clinic Pass...';
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Verifying Clinic Pass...';
+        }
 
-        const result = await verifyClinicAndAssociateDoctor(name, clinicCode, pin, dept);
+        const result = await verifyClinicAndAssociateDoctor(name, clinicCode, pin);
 
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Verify Clinic Pass & Sign In →';
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Verify Clinic Pass & Sign In →';
+        }
 
         if (!result.ok) {
             showError(result.reason);
@@ -279,7 +299,6 @@
         const sessionObj = {
             name: result.displayName,
             doctorId: result.doctorId,
-            department: result.department,
             clinicCode: result.clinicCode,
             clinicName: result.clinicName,
             unlockedClinics: {
@@ -295,6 +314,11 @@
         setSession(sessionObj);
         pinInput.value = '';
         unlock();
-        window.dispatchEvent(new CustomEvent('careflow-doctor-login', { detail: sessionObj }));
+
+        if (typeof window.startDoctorDashboard === 'function') {
+            window.startDoctorDashboard(sessionObj);
+        } else {
+            window.dispatchEvent(new CustomEvent('careflow-doctor-login', { detail: sessionObj }));
+        }
     });
 })();
