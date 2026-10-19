@@ -25,22 +25,34 @@
             <div class="safety-pill">🛡️ Safety-First • Non-Diagnostic • Clinician-in-the-Loop</div>
             <h1 id="heroGreetingTitle">CareFlow AI Triage Assistant</h1>
             <p class="hero-subtitle">
-                Multilingual, multimodal clinical intake &amp; dynamic prioritization across voice, medical reports, and live patient-doctor consultations.
+                Multilingual, multimodal clinical intake &amp; dynamic prioritization across clinics, doctors, and live patient consultations.
             </p>
         </div>
 
-        <!-- First-Time / Switch Sign-In Card (Kept for quick patient profile setup) -->
+        <!-- First-Time / Switch Sign-In Card -->
         <section id="authCard" class="auth-card">
             <div class="auth-card-header">
-                <h3 id="authCardTitle">Quick Patient Profile Setup</h3>
+                <h3 id="authCardTitle">Quick Sign-In / Profile Setup</h3>
                 <span class="cookie-badge">🍪 Saved locally via browser cookies</span>
             </div>
             <form id="cookieAuthForm" class="auth-form">
                 <div class="form-row">
                     <div class="form-group half">
-                        <label for="authName">Patient Full Name *</label>
-                        <input type="text" id="authName" placeholder="e.g. Ramesh Kumar" required>
+                        <label for="authRole">I am a *</label>
+                        <select id="authRole" required>
+                            <option value="patient">🧑 Patient / Caregiver</option>
+                            <option value="doctor">🩺 Doctor / Healthcare Professional</option>
+                            <option value="clinic">🏥 Clinic / Hospital Administration</option>
+                        </select>
                     </div>
+                    <div class="form-group half">
+                        <label for="authName" id="authNameLabel">Full Name *</label>
+                        <input type="text" id="authName" placeholder="e.g. Ramesh Kumar, Dr. Ananya Sharma, or Apollo Clinic" required>
+                    </div>
+                </div>
+
+                <!-- Patient-Specific Profile Fields -->
+                <div id="patientAuthFields" class="form-row">
                     <div class="form-group quarter">
                         <label for="authAge">Age *</label>
                         <input type="number" id="authAge" placeholder="32" min="1" max="120" value="30">
@@ -53,117 +65,239 @@
                             <option value="Other">Other</option>
                         </select>
                     </div>
+                    <div class="form-group half">
+                        <label for="authPatientId">Patient ID (Auto or Custom)</label>
+                        <input type="text" id="authPatientId" placeholder="e.g. USR-8492">
+                    </div>
                 </div>
+
+                <!-- Doctor-Specific Profile Fields -->
+                <div id="doctorAuthFields" class="form-row" style="display: none;">
+                    <div class="form-group half">
+                        <label for="authClinic">Associated Clinic Code *</label>
+                        <input type="text" id="authClinic" placeholder="e.g. CARE-101" value="CARE-101">
+                    </div>
+                    <div class="form-group half">
+                        <label for="authDept">Primary Department *</label>
+                        <select id="authDept">
+                            <option value="All">All Departments</option>
+                            <option value="Emergency & Trauma">Emergency &amp; Trauma</option>
+                            <option value="General Medicine">General Medicine</option>
+                            <option value="Cardiology">Cardiology</option>
+                            <option value="Pulmonology">Pulmonology</option>
+                            <option value="Neurology">Neurology</option>
+                            <option value="Orthopedics">Orthopedics</option>
+                            <option value="Pediatrics">Pediatrics</option>
+                            <option value="Gastroenterology">Gastroenterology</option>
+                            <option value="Dermatology">Dermatology</option>
+                            <option value="Psychiatry">Psychiatry</option>
+                            <option value="Obstetrics & Gynecology">Obstetrics &amp; Gynecology (OB-GYN)</option>
+                            <option value="ENT">ENT (Otolaryngology)</option>
+                            <option value="Nephrology">Nephrology</option>
+                            <option value="Oncology">Oncology</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Clinic-Specific Profile Fields -->
+                <div id="clinicAuthFields" class="form-row" style="display: none;">
+                    <div class="form-group half">
+                        <label for="authClinicAdminCode">Clinic Code *</label>
+                        <input type="text" id="authClinicAdminCode" placeholder="e.g. CARE-101" value="CARE-101" style="text-transform: uppercase;">
+                    </div>
+                    <div class="form-group half">
+                        <label>Clinic Security Gate</label>
+                        <input type="text" value="Requires 4-Digit Clinic Pass on next screen" disabled style="background:#f8fafc; color:#64748b;">
+                    </div>
+                </div>
+
                 <div class="auth-actions">
-                    <button type="submit" class="primary-btn">Save Profile &amp; Continue as Patient</button>
-                    <button type="button" id="clearCookieBtn" class="ghost-btn" style="display: none;">Clear Profile</button>
+                    <button type="submit" class="primary-btn">Save Profile to Cookies &amp; Continue</button>
+                    <button type="button" id="clearCookieBtn" class="ghost-btn" style="display: none;">Clear Saved Profile</button>
                 </div>
             </form>
         </section>
 
-        <!-- Role Portals -->
+        <!-- Role Portals (Patient, Doctor, Clinic) -->
         <div class="role-selection">
-            <!-- Patient Card -->
             <div class="role-card patient-portal-card" onclick="window.location.href='patient.html'">
                 <div class="role-icon">🧑‍⚕️</div>
                 <h2>Patient Portal</h2>
-                <p>Submit symptoms via text, voice, or lab report photos. Only the Clinic Code is needed to route your case correctly.</p>
+                <p>Submit symptoms in English, Hindi, Hinglish, or regional languages via text, voice, or lab report photos using only the Clinic Code. Chat directly with your reviewing doctor.</p>
                 <div class="feature-tags">
                     <span>🎙️ Voice &amp; OCR</span>
                     <span>💬 Doctor Chat</span>
+                    <span>🔑 Code Only (No Pass)</span>
                 </div>
                 <button class="primary-btn full-width">Enter Patient Portal →</button>
             </div>
 
-            <!-- Doctor Card -->
             <div class="role-card doctor-portal-card" onclick="window.location.href='doctor.html'">
                 <div class="role-icon">🩺</div>
                 <h2>Clinician Dashboard</h2>
-                <p>Sign in using your name, your Clinic's Code, and the Clinic's secure 4-digit Pass to access prioritized triage queues.</p>
+                <p>Sign in with your Clinic Code &amp; 4-digit Clinic Pass to associate with a clinic, access its patient case database, reorder priority queues, and dispatch paramedics.</p>
                 <div class="feature-tags">
+                    <span>🔐 Code + 4-Digit Pass</span>
                     <span>▲▼ Priority Queue</span>
                     <span>🚨 Paramedic Dispatch</span>
                 </div>
                 <button class="secondary-btn full-width">Enter Doctor Dashboard →</button>
             </div>
 
-            <!-- Clinic Card (NEW) -->
             <div class="role-card clinic-portal-card" onclick="window.location.href='clinic.html'">
                 <div class="role-icon">🏥</div>
-                <h2>Clinic Admin</h2>
-                <p>Register your clinic, set your own secure 4-digit pass, and oversee all associated doctors and patient cases.</p>
+                <h2>Clinic Portal</h2>
+                <p>Register your clinic, create your custom Clinic Code and 4-digit doctor access pass, view all doctors associated with your clinic, and oversee every case under them.</p>
                 <div class="feature-tags">
-                    <span>🔐 Access Control</span>
-                    <span>👨‍⚕️ Doctor Roster</span>
+                    <span>🏷️ Custom Clinic Code</span>
+                    <span>🔑 4-Digit Passcode</span>
+                    <span>👨‍⚕️ Doctors &amp; Cases</span>
                 </div>
-                <button class="override-btn full-width" style="border-color:#8b5cf6; color:#8b5cf6;">Enter Clinic Portal →</button>
+                <button class="clinic-btn full-width">Enter Clinic Portal →</button>
             </div>
         </div>
     </div>
 
     <script>
         function setCookie(name, value, days = 30) {
-            const d = new Date(); d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
-            document.cookie = `${name}=${encodeURIComponent(JSON.stringify(value))};expires=${d.toUTCString()};path=/;SameSite=Lax`;
+            const d = new Date();
+            d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+            const encoded = encodeURIComponent(JSON.stringify(value));
+            document.cookie = `${name}=${encoded};expires=${d.toUTCString()};path=/;SameSite=Lax`;
             try { localStorage.setItem(name, JSON.stringify(value)); } catch (e) {}
         }
+
         function getCookie(name) {
-            const nameEQ = name + "="; const ca = document.cookie.split(';');
+            const nameEQ = name + "=";
+            const ca = document.cookie.split(';');
             for (let i = 0; i < ca.length; i++) {
                 let c = ca[i].trim();
-                if (c.indexOf(nameEQ) === 0) { try { return JSON.parse(decodeURIComponent(c.substring(nameEQ.length))); } catch (e) {} }
+                if (c.indexOf(nameEQ) === 0) {
+                    try {
+                        return JSON.parse(decodeURIComponent(c.substring(nameEQ.length)));
+                    } catch (e) {}
+                }
             }
-            try { const fallback = localStorage.getItem(name); return fallback ? JSON.parse(fallback) : null; } catch (e) { return null; }
+            try {
+                const fallback = localStorage.getItem(name);
+                return fallback ? JSON.parse(fallback) : null;
+            } catch (e) {
+                return null;
+            }
         }
+
         function deleteCookie(name) {
             document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
             try { localStorage.removeItem(name); } catch (e) {}
         }
-        function randomId(prefix, len = 8) {
-            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const a = new Uint32Array(len); crypto.getRandomValues(a);
-            return prefix + '-' + Array.from(a, n => chars[n % chars.length]).join('');
-        }
 
+        const authRole = document.getElementById('authRole');
+        const patientAuthFields = document.getElementById('patientAuthFields');
+        const doctorAuthFields = document.getElementById('doctorAuthFields');
+        const clinicAuthFields = document.getElementById('clinicAuthFields');
+        const authNameLabel = document.getElementById('authNameLabel');
         const cookieAuthForm = document.getElementById('cookieAuthForm');
         const userGreetingBar = document.getElementById('userGreetingBar');
         const heroGreetingTitle = document.getElementById('heroGreetingTitle');
         const authCardTitle = document.getElementById('authCardTitle');
         const clearCookieBtn = document.getElementById('clearCookieBtn');
 
+        function updateRoleFieldsVisibility(role) {
+            patientAuthFields.style.display = role === 'patient' ? 'flex' : 'none';
+            doctorAuthFields.style.display = role === 'doctor' ? 'flex' : 'none';
+            clinicAuthFields.style.display = role === 'clinic' ? 'flex' : 'none';
+            authNameLabel.textContent = role === 'clinic' ? 'Clinic / Hospital Name *' : 'Full Name *';
+        }
+
+        authRole.addEventListener('change', () => {
+            updateRoleFieldsVisibility(authRole.value);
+        });
+
         function renderProfileState() {
             const user = getCookie('careflow_user');
-            if (user && user.name && user.role === 'patient') {
-                heroGreetingTitle.textContent = `Welcome back, ${user.name}!`;
+            if (user && user.name) {
+                const role = user.role || 'patient';
+                const isDoc = role === 'doctor';
+                const isClinic = role === 'clinic';
+
+                const displayTitle = isDoc && !user.name.toLowerCase().startsWith('dr')
+                    ? 'Dr. ' + user.name
+                    : user.name;
+
+                heroGreetingTitle.textContent = `Welcome back, ${displayTitle}!`;
+
+                const roleBadge = isClinic ? '🏥 Clinic' : (isDoc ? '🩺 Doctor' : '🧑 Patient');
+                const targetHref = isClinic ? 'clinic.html' : (isDoc ? 'doctor.html' : 'patient.html');
+                const targetText = isClinic ? 'Clinic Console' : (isDoc ? 'Clinic Queue' : 'Dashboard');
+
                 userGreetingBar.innerHTML = `
-                    <span class="user-chip">🧑 Patient: <strong>${user.name}</strong> <small>(${user.userId})</small></span>
-                    <button class="sm-btn" onclick="window.location.href='patient.html'">Go to My Dashboard →</button>
+                    <span class="user-chip">
+                        ${roleBadge}: <strong>${user.name}</strong>
+                        <small>(${user.userId || user.clinicCode || ''})</small>
+                    </span>
+                    <button class="sm-btn" onclick="window.location.href='${targetHref}'">
+                        Go to My ${targetText} →
+                    </button>
                 `;
-                authCardTitle.textContent = `Update Active Patient Profile (${user.userId})`;
+                authCardTitle.textContent = `Update Active Profile (${user.userId || user.clinicCode})`;
+                authRole.value = role;
                 document.getElementById('authName').value = user.name;
-                document.getElementById('authAge').value = user.age || 30;
-                document.getElementById('authGender').value = user.gender || 'Male';
+                updateRoleFieldsVisibility(role);
+
+                if (isDoc) {
+                    document.getElementById('authClinic').value = user.clinicCode || 'CARE-101';
+                    document.getElementById('authDept').value = user.department || 'All';
+                } else if (isClinic) {
+                    document.getElementById('authClinicAdminCode').value = user.clinicCode || 'CARE-101';
+                } else {
+                    document.getElementById('authAge').value = user.age || 30;
+                    document.getElementById('authGender').value = user.gender || 'Male';
+                    document.getElementById('authPatientId').value = user.userId || '';
+                }
                 clearCookieBtn.style.display = 'inline-block';
             } else {
                 heroGreetingTitle.textContent = 'CareFlow AI Triage Assistant';
-                userGreetingBar.innerHTML = `<span class="text-muted">Not signed in</span>`;
-                authCardTitle.textContent = 'First-Time Patient Profile Setup';
+                userGreetingBar.innerHTML = `<span class="text-muted">Not signed in • Set up your profile below</span>`;
+                authCardTitle.textContent = 'First-Time Sign-In / Profile Setup';
+                document.getElementById('authPatientId').value = randomId('USR');
+                updateRoleFieldsVisibility(authRole.value);
                 clearCookieBtn.style.display = 'none';
             }
         }
 
+        function randomId(prefix, len = 8) {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            const a = new Uint32Array(len);
+            crypto.getRandomValues(a);
+            return prefix + '-' + Array.from(a, n => chars[n % chars.length]).join('');
+        }
+
         cookieAuthForm.addEventListener('submit', (e) => {
             e.preventDefault();
+            const role = authRole.value;
+            const name = document.getElementById('authName').value.trim();
             const existing = getCookie('careflow_user');
+
+            const clinicCode = role === 'clinic'
+                ? (document.getElementById('authClinicAdminCode').value || 'CARE-101').trim().toUpperCase()
+                : (document.getElementById('authClinic').value || 'CARE-101').trim().toUpperCase();
+
             const profile = {
-                role: 'patient',
-                name: document.getElementById('authName').value.trim(),
-                userId: (existing && existing.role === 'patient' ? existing.userId : randomId('USR')),
+                role,
+                name,
+                userId: role === 'patient'
+                    ? (document.getElementById('authPatientId').value.trim().toUpperCase() || randomId('USR'))
+                    : (role === 'clinic' ? clinicCode : (existing && existing.role === 'doctor' ? existing.userId : ('DOC-' + Math.floor(100 + Math.random() * 900)))),
                 age: document.getElementById('authAge').value || 30,
                 gender: document.getElementById('authGender').value || 'Male',
-                knownCases: existing?.knownCases || []
+                clinicCode,
+                department: document.getElementById('authDept').value || 'All',
+                savedClinics: existing?.savedClinics || [clinicCode]
             };
+
             setCookie('careflow_user', profile, 30);
-            window.location.href = 'patient.html';
+            renderProfileState();
+            window.location.href = role === 'clinic' ? 'clinic.html' : (role === 'doctor' ? 'doctor.html' : 'patient.html');
         });
 
         clearCookieBtn.addEventListener('click', () => {
