@@ -91,7 +91,7 @@ let pendingParamedicCase = null;
 let pendingSwitchClinicCode = null;
 
 // Cache for one-click English translations so auto-refreshes preserve translated messages
-const doctorChatTranslationCache = {}; // key: `${caseId}_${msgIndex}` -> { translatedText, detectedLanguage }
+const doctorChatTranslationCache = {};
 
 const PRIORITY_TIER_WEIGHT = {
     CRITICAL: 3,
@@ -542,12 +542,17 @@ window.loadVoiceNote = async function(caseId) {
     }
 };
 
+// ============================================================================
+// 3 DYNAMIC AI SUGGESTION BUBBLES INSIDE DOCTOR CHAT
+// ============================================================================
 function getFollowUpState(caseData) {
     const fu = caseData.followUps || null;
     const history = fu && Array.isArray(fu.history) ? fu.history : [];
     const active = fu
-        ? (Array.isArray(fu.active) ? fu.active : [])
-        : (Array.isArray(caseData.triage && caseData.triage.followUpQuestions) ? caseData.triage.followUpQuestions : []);
+        ? (Array.isArray(fu.active) ? fu.active.slice(0, 3) : [])
+        : (Array.isArray(caseData.triage && caseData.triage.followUpQuestions)
+            ? caseData.triage.followUpQuestions.slice(0, 3)
+            : []);
     return { active, history };
 }
 
@@ -564,7 +569,7 @@ function wordOverlap(a, b) {
     return hit / Math.min(A.size, B.size);
 }
 
-function findUsedSuggestions(text, active, hint) {
+function findUsedSuggestions(text, active) {
     const nm = normQ(text);
     const words = nm ? nm.split(' ').length : 0;
     return active.filter(q => {
@@ -572,10 +577,84 @@ function findUsedSuggestions(text, active, hint) {
         if (!nq || !nm) return false;
         if (nm.includes(nq)) return true;
         if (nm.length >= 12 && nq.includes(nm)) return true;
-        if (hint && q === hint) return words >= 3 && wordOverlap(text, q) >= 0.4;
         return words >= 4 && wordOverlap(text, q) >= 0.8;
     });
 }
+
+// Click on any of the 3 suggestion bubbles inside chat -> Immediately sends to patient & keeps other bubbles visible
+window.sendSuggestedBubble = async function(caseId, bubbleIdx) {
+    const caseData = currentCasesList.find(c => c.id === caseId);
+    if (!caseData) return;
+
+    const fuState = getFollowUpState(caseData);
+    const questionText = fuState.active[bubbleIdx];
+    if (!questionText) return;
+
+    const btnEl = document.getElementById(`docBubbleBtn_${caseId}_${bubbleIdx}`);
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '⏳ Sending to patient...';
+    }
+
+    const docName = getFormattedDocName();
+    const nowIso = new Date().toISOString();
+
+    const messages = Array.isArray(caseData.messages) ? [...caseData.messages] : [];
+    messages.push({
+        id: 'MSG-' + Date.now(),
+        senderRole: 'doctor',
+        senderName: docName,
+        text: questionText,
+        timestamp: nowIso
+    });
+
+    // Remove only the clicked bubble; keep the remaining 1 or 2 bubbles visible for the doctor
+    const remainingActive = fuState.active.filter((_, i) => i !== bubbleIdx);
+    const updatedHistory = [
+        ...fuState.history,
+        {
+            question: questionText,
+            status: 'ASKED',
+            askedAt: nowIso,
+            askedBy: docName
+        }
+    ];
+
+    const auditLog = Array.isArray(caseData.auditLog) ? [...caseData.auditLog] : [];
+    auditLog.push({
+        timestamp: nowIso,
+        actor: docName,
+        action: `Sent AI-suggested follow-up bubble in chat: "${questionText.substring(0, 90)}"`
+    });
+
+    const actionMeta = buildDoctorActionEntry(caseData, 'Attending & Asked Follow-Up in Chat', questionText.substring(0, 120));
+
+    try {
+        await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                status: caseData.status === 'PENDING_REVIEW' ? 'ATTENDING' : caseData.status,
+                messages,
+                followUps: {
+                    active: remainingActive,
+                    history: updatedHistory,
+                    updatedAt: (caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp || nowIso
+                },
+                auditLog,
+                ...actionMeta
+            })
+        });
+        await recordDoctorActivityInClinic(`Asked follow-up question on Case #${caseId}`);
+        await fetchCloudQueue();
+    } catch (err) {
+        alert("Failed to send suggested question: " + err.message);
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.textContent = questionText;
+        }
+    }
+};
 
 function renderDoctorCaseCard(caseData, index, totalCount) {
     const t = caseData.triage || {};
@@ -640,33 +719,35 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
         ? `<div class="alert-box">${flagItems.join('') || '⚠️ Low AI confidence flag triggered. Manual verification required.'}</div>`
         : '';
 
+    // 3 AI Suggested Question Bubbles (rendered inside the chat box)
     const fuState = getFollowUpState(caseData);
-    const awaitingQs = fuState.history.filter(h => h.status === 'ASKED');
-    const answeredQs = fuState.history.filter(h => h.status === 'ANSWERED');
-
-    const activeHtml = fuState.active.map((q, i) => `
-            <li class="followup-item">
-                <span>${escapeHtml(q)}</span>
-                <button type="button" class="chip-btn" onclick="askFollowUpInChat('${caseData.id}', ${i})">Ask in Chat ↵</button>
-            </li>
-        `).join('');
-    const awaitingHtml = awaitingQs.map(h => `
-            <li class="followup-item followup-pending">
-                <span>${escapeHtml(h.question)}</span>
-                <small>⏳ Asked ${escapeHtml(fmtDateTime(h.askedAt))} &mdash; awaiting patient reply</small>
-            </li>
-        `).join('');
-    const questionsHtml = (activeHtml || awaitingHtml)
-        ? activeHtml + awaitingHtml
-        : `<li class="followup-empty">${answeredQs.length ? 'No further questions suggested right now &mdash; the patient\u2019s latest reply is summarised below.' : 'None suggested'}</li>`;
-    const answeredHtml = answeredQs.length ? `
-        <details class="followup-answered">
-            <summary>✓ Asked &amp; answered (${answeredQs.length})</summary>
-            <ul>${answeredQs.map(h => `
-                <li><strong>Q:</strong> ${escapeHtml(h.question)}<br><em>Patient (${escapeHtml(fmtDateTime(h.answeredAt))}):</em> &ldquo;${escapeHtml(h.answer || '')}&rdquo;</li>`).join('')}
-            </ul>
-        </details>` : '';
-    const followUpUpdatedAt = (caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp;
+    const suggestionBubblesHtml = (!isDissolved && fuState.active.length > 0) ? `
+        <div class="doc-chat-suggestions-bar">
+            <div class="doc-suggestions-header">
+                <span>🤖 <strong>AI Quick-Ask Bubbles (${fuState.active.length}/3):</strong> Click any bubble to send immediately — all 3 refresh dynamically when the patient replies</span>
+            </div>
+            <div class="doc-suggestion-bubbles">
+                ${fuState.active.map((q, qIdx) => `
+                    <button
+                        type="button"
+                        id="docBubbleBtn_${caseData.id}_${qIdx}"
+                        class="doc-suggestion-bubble-btn"
+                        title="Click to send this question to the patient"
+                        onclick="sendSuggestedBubble('${caseData.id}', ${qIdx})"
+                    >
+                        <span class="bubble-q-text">${escapeHtml(q)}</span>
+                        <span class="bubble-send-icon">Send ➤</span>
+                    </button>
+                `).join('')}
+            </div>
+        </div>
+    ` : (!isDissolved ? `
+        <div class="doc-chat-suggestions-bar">
+            <div class="doc-suggestions-header">
+                <span>⏳ All 3 suggested questions sent — 3 new clinical questions will appear automatically as soon as the patient replies.</span>
+            </div>
+        </div>
+    ` : '');
 
     // Messages with 1-Click "Translate to English" on Patient messages
     const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
@@ -809,18 +890,13 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
 
                         <div class="section-title">Standardized Symptoms</div>
                         <ul>${symptomsHtml}</ul>
+                    </div>
 
+                    <div>
                         <div class="section-title">Source Attribution Links</div>
                         <div class="sources-list">${sourcesHtml}</div>
 
                         ${sourcesPanelHtml}
-                    </div>
-
-                    <div>
-                        <div class="section-title">AI Suggested Follow-Up Questions</div>
-                        <div class="followup-meta">Updates automatically after each patient reply${followUpUpdatedAt ? ' &middot; refreshed ' + escapeHtml(fmtDateTime(followUpUpdatedAt)) : ''}</div>
-                        <ul class="followup-list">${questionsHtml}</ul>
-                        ${answeredHtml}
 
                         ${alertHtml}
 
@@ -831,7 +907,7 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                     </div>
                 </div>
 
-                <!-- Doctor-Patient Case Chat -->
+                <!-- Doctor-Patient Case Chat (with 3 Click-to-Send AI Suggestion Bubbles inside) -->
                 <div class="chat-section doctor-chat-section">
                     <div class="chat-header-bar">
                         <span>💬 Direct Patient Consultation Chat (${messages.length})</span>
@@ -843,9 +919,13 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                     <div class="chat-messages-box" id="docChatBox_${caseData.id}">
                         ${chatHtml}
                     </div>
+
+                    <!-- 3 Click-to-Send AI Suggested Question Bubbles Inside Chat -->
+                    ${suggestionBubblesHtml}
+
                     ${!isDissolved ? `
                         <div class="chat-input-row">
-                            <input type="text" id="docChatInput_${caseData.id}" placeholder="Update patient on health, suggest medicines, or ask follow-up questions...">
+                            <input type="text" id="docChatInput_${caseData.id}" placeholder="Or type a custom message / medicine advice to the patient...">
                             <button type="button" class="primary-btn sm-btn" onclick="sendDoctorChatMessage('${caseData.id}')">Send to Patient</button>
                         </div>
                     ` : ''}
@@ -1079,18 +1159,8 @@ window.handleDirectPrioritySelect = async function(caseId, newPriority) {
 };
 
 // ============================================================================
-// DOCTOR-PATIENT CHATTING & FOLLOW-UP INSERTION
+// DOCTOR CUSTOM CHAT MESSAGE SENDING
 // ============================================================================
-window.askFollowUpInChat = function(caseId, index) {
-    const caseData = currentCasesList.find(c => c.id === caseId);
-    const question = caseData ? getFollowUpState(caseData).active[index] : null;
-    const input = document.getElementById(`docChatInput_${caseId}`);
-    if (!question || !input) return;
-    input.value = question;
-    input.dataset.suggestion = question;
-    input.focus();
-};
-
 window.sendDoctorChatMessage = async function(caseId) {
     const input = document.getElementById(`docChatInput_${caseId}`);
     const text = input.value.trim();
@@ -1121,7 +1191,7 @@ window.sendDoctorChatMessage = async function(caseId) {
     const actionMeta = buildDoctorActionEntry(caseData, 'Attending & Chatted with Patient', text.substring(0, 120));
 
     const fuState = getFollowUpState(caseData);
-    const usedQs = findUsedSuggestions(text, fuState.active, input.dataset.suggestion || '');
+    const usedQs = findUsedSuggestions(text, fuState.active);
     const patch = {
         status: caseData.status === 'PENDING_REVIEW' ? 'ATTENDING' : caseData.status,
         messages,
@@ -1137,11 +1207,6 @@ window.sendDoctorChatMessage = async function(caseId) {
             ],
             updatedAt: (caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp || nowIso
         };
-        auditLog.push({
-            timestamp: nowIso,
-            actor: docName,
-            action: `Used AI-suggested follow-up question${usedQs.length > 1 ? 's' : ''}: "${usedQs.join('" / "').substring(0, 120)}"`
-        });
     }
 
     try {
@@ -1151,7 +1216,6 @@ window.sendDoctorChatMessage = async function(caseId) {
             body: JSON.stringify(patch)
         });
         input.value = '';
-        input.dataset.suggestion = '';
         await recordDoctorActivityInClinic(`Messaged patient on Case #${caseId}`);
         await fetchCloudQueue();
     } catch (err) {
