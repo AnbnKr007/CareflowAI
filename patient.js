@@ -58,9 +58,8 @@ const PATIENT_TRANSLATE_LANGUAGES = [
     { value: 'Axomiya', label: 'Axomiya (অসমীয়া)' }
 ];
 
-// Cache for patient translations so auto-refresh preserves translated messages
-const patientChatTranslationCache = {}; // key: `${caseId}_${msgIndex}` -> { targetLanguage, translatedText }
-const patientSelectedLangByCase = {};   // caseId -> selected language string
+const patientChatTranslationCache = {};
+const patientSelectedLangByCase = {};
 
 // Initialize or load Patient Cookie Profile
 let currentUser = getCookie('careflow_user');
@@ -103,7 +102,7 @@ let audioMime = 'audio/webm';
 let recordTimer = null;
 const MAX_RECORD_SECONDS = 120;
 let imageBase64 = null;
-let latestFetchedCasesMap = {}; // caseId -> caseData
+let latestFetchedCasesMap = {};
 
 function initPatientSessionUI() {
     if (currentUser.name) {
@@ -290,20 +289,59 @@ function buildClientFallbackTriage(payload) {
     };
 }
 
-// Submit New Intake Form
+// ============================================================================
+// SUBMIT NEW INTAKE FORM (CHECKS CLINIC CODE EXISTENCE BEFORE CALLING GEMINI API)
+// ============================================================================
 patientForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    statusMessage.style.display = 'none';
 
     if (!document.getElementById('symptomsText').value.trim() && !audioBase64 && !imageBase64) {
         alert("Please provide at least one input: symptom text, a voice recording, or a medical report image.");
         return;
     }
 
+    const clinicCode = cleanClinicCode(document.getElementById('clinicCode').value);
+    if (!clinicCode) {
+        statusMessage.className = "status-banner status-error";
+        statusMessage.innerHTML = `<strong>❌ Missing Clinic Code:</strong> Please enter a valid Clinic Code before submitting.`;
+        statusMessage.style.display = 'block';
+        return;
+    }
+
     const submitBtn = document.getElementById('submitBtn');
     submitBtn.disabled = true;
+    submitBtn.textContent = "🔍 Verifying Clinic Code...";
+
+    // STEP 1: Verify that the Clinic Code actually exists in Firebase BEFORE calling the Gemini API
+    try {
+        const clinicRes = await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/info.json`);
+        const clinicInfo = await clinicRes.json();
+
+        if (!clinicInfo || (!clinicInfo.clinicCode && !clinicInfo.passHash && !clinicInfo.passcode)) {
+            statusMessage.className = "status-banner status-error";
+            statusMessage.innerHTML = `
+                <strong>❌ Clinic Code "${escapeHtml(clinicCode)}" Does Not Exist:</strong><br>
+                No clinic is registered under the code <strong>${escapeHtml(clinicCode)}</strong> yet. Your symptoms were <strong>not</strong> sent. Please verify the code with your clinic (or register the clinic on the <a href="clinic.html" style="color:#991b1b; font-weight:700; text-decoration:underline;">Clinic Portal</a> first).
+            `;
+            statusMessage.style.display = 'block';
+            statusMessage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Submit for Clinical Triage Review";
+            return;
+        }
+    } catch (verifyErr) {
+        statusMessage.className = "status-banner status-error";
+        statusMessage.innerHTML = `<strong>❌ Could Not Verify Clinic Code:</strong> ${escapeHtml(verifyErr.message)}`;
+        statusMessage.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit for Clinical Triage Review";
+        return;
+    }
+
+    // STEP 2: Clinic exists -> Proceed to Multimodal AI Triage
     submitBtn.textContent = "⏳ Running Multimodal AI Triage...";
 
-    const clinicCode = cleanClinicCode(document.getElementById('clinicCode').value);
     const patientName = document.getElementById('patientName').value.trim();
     const patientAge = document.getElementById('patientAge').value;
     const patientGender = document.getElementById('patientGender').value;
@@ -359,6 +397,13 @@ patientForm.addEventListener('submit', async (e) => {
 
         const priorityRankMap = { CRITICAL: 300, URGENT: 200, ROUTINE: 100 };
         const initialScore = priorityRankMap[triagedResult.priority] || 100;
+        const initialBubbles = Array.isArray(triagedResult.followUpQuestions) && triagedResult.followUpQuestions.length
+            ? triagedResult.followUpQuestions.slice(0, 3)
+            : [
+                'Have these symptoms worsened suddenly in the last 2–4 hours?',
+                'Do you have any existing conditions such as diabetes, hypertension, or asthma?',
+                'Have you taken any medication for these symptoms yet?'
+            ];
 
         const fullCaseRecord = {
             id: caseId,
@@ -374,6 +419,11 @@ patientForm.addEventListener('submit', async (e) => {
             imagePreviewData: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : null,
             timestamp: nowIso,
             triage: triagedResult,
+            followUps: {
+                active: initialBubbles,
+                history: [],
+                updatedAt: nowIso
+            },
             manualOrderOffset: 0,
             queueScore: initialScore,
             status: 'PENDING_REVIEW',
@@ -474,7 +524,6 @@ window.onPatientChatLangChange = function(caseId, newLang) {
     currentUser.preferredTranslateLang = newLang;
     setCookie('careflow_user', currentUser, 30);
 
-    // Update all per-message translate button labels in this case card
     document.querySelectorAll(`[data-trans-case="${caseId}"]`).forEach(btn => {
         btn.textContent = `🌐 Translate → ${newLang}`;
     });
@@ -644,7 +693,6 @@ async function loadPatientCasesByClinic(silent = false) {
     }
 }
 
-// Render an Individual Patient Case Card with Regional Language Translation Dropdown & 1-Click Translate
 function renderPatientCaseCard(caseData) {
     const card = document.createElement('div');
     const isDissolved = caseData.status === 'DISSOLVED';
@@ -784,7 +832,7 @@ function sameQuestion(a, b) {
     return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
 }
 
-// Patient Sends a Chat Reply under a Specific Case (Triggers AI Summary & Dynamic Priority Shift)
+// Patient Sends a Chat Reply under a Specific Case (Refreshes All 3 Doctor Chat Question Bubbles via Lighter Gemini Model)
 window.sendPatientChatMessage = async function(clinicCode, caseId) {
     const inputEl = document.getElementById(`chatInput_${caseId}`);
     const sendBtn = document.getElementById(`sendChatBtn_${caseId}`);
@@ -857,7 +905,12 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
                 updatedPriority: newPrio,
                 priorityShiftReason: reason,
                 chatSummary: `Latest patient update: "${text}". (${reason})`,
-                newSymptomsExtracted: []
+                newSymptomsExtracted: [],
+                followUpQuestions: [
+                    'How severe is the discomfort right now on a scale of 1 to 10?',
+                    'Are you noticing any new symptoms like dizziness, chills, or nausea?',
+                    'Did any medicine or rest give you partial relief?'
+                ]
             };
         }
 
@@ -871,9 +924,26 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
         }
         const priorityRankMap = { CRITICAL: 300, URGENT: 200, ROUTINE: 100 };
 
+        const newHistory = fuState.history.map(h => h.status === 'ASKED'
+            ? { ...h, status: 'ANSWERED', answeredAt: nowIso, answer: text.slice(0, 200) }
+            : h);
+        const answeredNow = fuState.history.filter(h => h.status === 'ASKED').length;
+
+        const aiRefreshed = Array.isArray(chatAiResult.followUpQuestions) && chatAiResult.followUpQuestions.length > 0;
+        const newActive = (aiRefreshed ? chatAiResult.followUpQuestions : fuState.active)
+            .filter(q => typeof q === 'string' && q.trim() && !newHistory.some(h => sameQuestion(h.question, q)))
+            .slice(0, 3);
+
+        const newFollowUps = {
+            active: newActive,
+            history: newHistory,
+            updatedAt: nowIso
+        };
+
         const updatedTriage = {
             ...(caseData.triage || {}),
-            priority: newPriority
+            priority: newPriority,
+            followUpQuestions: newActive
         };
 
         if (Array.isArray(chatAiResult.newSymptomsExtracted) && chatAiResult.newSymptomsExtracted.length > 0) {
@@ -891,19 +961,6 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             ];
         }
 
-        const newHistory = fuState.history.map(h => h.status === 'ASKED'
-            ? { ...h, status: 'ANSWERED', answeredAt: nowIso, answer: text.slice(0, 200) }
-            : h);
-        const answeredNow = fuState.history.filter(h => h.status === 'ASKED').length;
-        const aiRefreshed = Array.isArray(chatAiResult.followUpQuestions);
-        const newActive = (aiRefreshed ? chatAiResult.followUpQuestions : fuState.active)
-            .filter(q => typeof q === 'string' && q.trim() && !newHistory.some(h => sameQuestion(h.question, q)));
-        const newFollowUps = {
-            active: newActive,
-            history: newHistory,
-            updatedAt: aiRefreshed ? nowIso : ((caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp || nowIso)
-        };
-
         const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
         auditLog.push({
             timestamp: nowIso,
@@ -914,7 +971,7 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             auditLog.push({
                 timestamp: nowIso,
                 actor: 'CareFlow AI Re-Triage',
-                action: `Refreshed follow-up questions from the patient's reply (${newActive.length} suggested${answeredNow ? ', ' + answeredNow + ' asked question' + (answeredNow > 1 ? 's' : '') + ' answered' : ''}).`
+                action: `Refreshed 3 chat suggestion bubbles for doctor (${answeredNow ? answeredNow + ' previous question(s) answered' : 'updated from latest reply'}).`
             });
         }
 
