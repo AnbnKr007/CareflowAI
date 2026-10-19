@@ -513,7 +513,7 @@ body {
 }
 
 /* ==========================================================================
-   PATIENT CLINIC-SORTED CASES & CHAT
+   PATIENT CLINIC-SORTED CASES, CHAT & TRANSLATION CONTROLS
    ========================================================================== */
 .clinic-group-block {
     margin-bottom: 18px;
@@ -622,10 +622,35 @@ body {
     color: var(--text-secondary);
     margin-bottom: 8px;
     flex-wrap: wrap;
+    gap: 8px;
+}
+
+.chat-lang-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.chat-lang-toolbar label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #1e40af;
+}
+
+.chat-lang-select {
+    padding: 3px 8px;
+    border: 1px solid #93c5fd;
+    border-radius: 6px;
+    background: #eff6ff;
+    color: #1e3a8a;
+    font-size: 0.76rem;
+    font-weight: 700;
+    cursor: pointer;
 }
 
 .chat-messages-box {
-    max-height: 190px;
+    max-height: 220px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -668,6 +693,55 @@ body {
     font-size: 0.72rem;
     opacity: 0.8;
     margin-bottom: 2px;
+}
+
+.chat-translate-row {
+    margin-top: 6px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.translate-chip-btn {
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid #93c5fd;
+    color: #1d4ed8;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.translate-chip-btn:hover:not(:disabled) {
+    background: #dbeafe;
+}
+
+.translate-chip-btn:disabled {
+    opacity: 0.65;
+    cursor: wait;
+}
+
+.chat-translated-box {
+    margin-top: 6px;
+    padding: 6px 9px;
+    background: rgba(255, 255, 255, 0.92);
+    border-left: 3px solid #2563eb;
+    border-radius: 6px;
+    color: #0f172a;
+    text-align: left;
+}
+
+.translated-meta {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #1d4ed8;
+    margin-bottom: 2px;
+}
+
+.translated-text {
+    font-size: 0.83rem;
+    line-height: 1.4;
 }
 
 .chat-input-row {
