@@ -3,79 +3,199 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clinic Admin Portal — CareFlow AI</title>
+    <title>Clinic Administration Portal — CareFlow AI</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="portal-body clinic-locked">
-    
-    <!-- Clinic Auth Gate -->
-    <div id="clinicLoginGate" class="doctor-login-gate" role="dialog" aria-modal="true">
-        <form id="clinicLoginForm" class="doctor-login-card" autocomplete="off">
-            <div class="login-brand">🏥 CareFlow AI</div>
-            <h2 id="clinicGateTitle">Clinic Portal</h2>
-            
-            <div class="clinic-auth-toggle">
-                <label><input type="radio" name="authMode" value="login" checked> Sign In</label>
-                <label><input type="radio" name="authMode" value="register"> Register Clinic</label>
+    <!-- Clinic Registration & Sign-In Gate -->
+    <div id="clinicAuthGate" class="doctor-login-gate" role="dialog" aria-modal="true" aria-labelledby="clinicGateTitle">
+        <div class="clinic-auth-card">
+            <div class="login-brand">🏥 CareFlow AI • Clinic Registry</div>
+            <h2 id="clinicGateTitle">Clinic Portal Access</h2>
+            <p class="login-sub">Register your clinic with a custom code &amp; 4-digit pass, or sign in to view your doctors and patient cases.</p>
+
+            <!-- Mode Tabs -->
+            <div class="clinic-auth-tabs">
+                <button type="button" id="tabClinicSignIn" class="clinic-tab-btn active" onclick="switchClinicAuthTab('signin')">Sign In to Clinic</button>
+                <button type="button" id="tabClinicRegister" class="clinic-tab-btn" onclick="switchClinicAuthTab('register')">Register New Clinic</button>
             </div>
 
-            <div id="clinicNameGroup" style="display:none;">
-                <label for="clinicNameInput">Clinic Full Name</label>
-                <input type="text" id="clinicNameInput" placeholder="e.g. City Care Hospital">
-            </div>
+            <!-- Sign-In Form -->
+            <form id="clinicSignInForm" class="clinic-gate-form" autocomplete="off">
+                <label for="signInClinicCode">Clinic Code *</label>
+                <input type="text" id="signInClinicCode" placeholder="e.g. CARE-101" required style="text-transform: uppercase;">
 
-            <label for="clinicCodeInput">Clinic Code</label>
-            <input type="text" id="clinicCodeInput" placeholder="e.g. CITY-202" style="text-transform: uppercase;" required>
+                <label for="signInClinicPass">4-Digit Clinic Pass *</label>
+                <input type="password" id="signInClinicPass" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" required>
 
-            <label for="clinicPassInput">Secure 4-Digit Pass</label>
-            <input type="password" id="clinicPassInput" class="pin-input" maxlength="4" pattern="\d{4}" placeholder="••••" required>
+                <div id="clinicSignInError" class="login-error" role="alert" style="display: none;"></div>
 
-            <div id="clinicLoginError" class="login-error" style="display: none;"></div>
+                <button type="submit" id="clinicSignInBtn" class="primary-btn full-width" style="margin-top:14px;">Access Clinic Console →</button>
+            </form>
 
-            <button type="submit" class="primary-btn full-width" id="clinicAuthBtn">Sign In →</button>
+            <!-- Register Form -->
+            <form id="clinicRegisterForm" class="clinic-gate-form" autocomplete="off" style="display: none;">
+                <label for="regClinicName">Clinic / Hospital Name *</label>
+                <input type="text" id="regClinicName" placeholder="e.g. Apollo Multispecialty Clinic" required>
+
+                <div class="form-row" style="margin-top:8px;">
+                    <div class="form-group half" style="margin-bottom:0;">
+                        <label for="regClinicCode">Create Clinic Code *</label>
+                        <input type="text" id="regClinicCode" placeholder="e.g. CARE-101" required style="text-transform: uppercase;">
+                    </div>
+                    <div class="form-group half" style="margin-bottom:0;">
+                        <label for="regClinicPass">Set 4-Digit Pass *</label>
+                        <input type="password" id="regClinicPass" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" required>
+                    </div>
+                </div>
+
+                <label for="regClinicLocation">City / Address (Optional)</label>
+                <input type="text" id="regClinicLocation" placeholder="e.g. Varanasi, Uttar Pradesh">
+
+                <div id="clinicRegisterError" class="login-error" role="alert" style="display: none;"></div>
+
+                <button type="submit" id="clinicRegisterBtn" class="secondary-btn full-width" style="margin-top:14px;">Register Clinic &amp; Open Console →</button>
+            </form>
+
             <a href="index.html" class="login-back">← Back to home</a>
-        </form>
+            <p class="login-note">
+                Share your <strong>Clinic Code</strong> publicly with patients for intake, and share both the <strong>Clinic Code + 4-Digit Pass</strong> privately with your doctors.
+            </p>
+        </div>
     </div>
 
-    <!-- Top Admin Bar -->
+    <!-- Top Clinic Navigation Bar -->
     <header class="portal-topbar">
         <div class="topbar-left">
             <a href="index.html" class="back-link">← Home</a>
-            <span class="badge badge-clinic">🏥 Clinic Administration</span>
+            <span class="badge badge-clinic">🏥 Clinic Administration Console</span>
         </div>
-        <div id="clinicGreetingHeader" class="topbar-right">
-            <!-- Populated via JS -->
+        <div id="clinicHeaderRight" class="topbar-right">
+            <!-- Populated dynamically -->
         </div>
     </header>
 
+    <!-- Clinic Credentials & Command Banner -->
+    <section class="clinic-command-banner">
+        <div class="clinic-identity-block">
+            <div class="clinic-title-row">
+                <h1 id="clinicDisplayName">Loading Clinic...</h1>
+                <span id="clinicLocationBadge" class="demog-pill"></span>
+            </div>
+            <p class="clinic-sub-note">
+                Patients only need your <strong>Clinic Code</strong> to submit cases. Doctors require both your <strong>Clinic Code</strong> and <strong>4-Digit Pass</strong> to sign in and access cases.
+            </p>
+        </div>
+
+        <div class="clinic-credentials-box">
+            <div class="cred-item">
+                <span class="cred-label">PUBLIC PATIENT &amp; DOCTOR CODE</span>
+                <div class="cred-value-row">
+                    <strong id="bannerClinicCode" class="cred-code">---</strong>
+                    <button type="button" class="chip-btn" onclick="copyClinicCode()">📋 Copy</button>
+                </div>
+            </div>
+
+            <div class="cred-item">
+                <span class="cred-label">DOCTOR 4-DIGIT ACCESS PASS</span>
+                <div class="cred-value-row">
+                    <strong id="bannerClinicPass" class="cred-pass">••••</strong>
+                    <button type="button" id="togglePassBtn" class="chip-btn" onclick="togglePassVisibility()">👁️ Show</button>
+                    <button type="button" class="chip-btn" onclick="openChangePassModal()">🔑 Change</button>
+                </div>
+            </div>
+
+            <div class="cred-actions">
+                <button type="button" id="syncClinicBtn" class="primary-btn sm-btn" onclick="syncClinicDashboard()">↻ Sync Live Data</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Clinic-Wide Metrics Bar -->
+    <section class="queue-stats-bar">
+        <div class="stat-pill">👨‍⚕️ Associated Doctors: <strong id="statTotalDoctors">0</strong></div>
+        <div class="stat-pill">📋 Total Cases: <strong id="statTotalCases">0</strong></div>
+        <div class="stat-pill stat-critical">🔴 Critical: <strong id="statCriticalCases">0</strong></div>
+        <div class="stat-pill stat-urgent">🟠 Urgent: <strong id="statUrgentCases">0</strong></div>
+        <div class="stat-pill stat-routine">🟢 Routine: <strong id="statRoutineCases">0</strong></div>
+        <div class="stat-pill">⏳ Unassigned Cases: <strong id="statUnassignedCases">0</strong></div>
+    </section>
+
+    <!-- View Mode Filter Bar -->
+    <section class="clinic-control-bar">
+        <div class="clinic-view-toolbar">
+            <div class="clinic-view-tabs">
+                <button type="button" id="viewTabDoctors" class="clinic-view-btn active" onclick="setClinicMainView('doctors')">
+                    👨‍⚕️ Doctors &amp; Cases Under Them
+                </button>
+                <button type="button" id="viewTabAllCases" class="clinic-view-btn" onclick="setClinicMainView('cases')">
+                    🗂️ All Clinic Cases (<span id="tabCaseCount">0</span>)
+                </button>
+            </div>
+
+            <div class="clinic-Search-filters">
+                <select id="clinicDoctorFilter" onchange="renderClinicViews()">
+                    <option value="ALL">All Associated Doctors</option>
+                </select>
+                <select id="clinicPriorityFilter" onchange="renderClinicViews()">
+                    <option value="ALL">All Priorities</option>
+                    <option value="CRITICAL">🔴 Critical Only</option>
+                    <option value="URGENT">🟠 Urgent Only</option>
+                    <option value="ROUTINE">🟢 Routine Only</option>
+                </select>
+                <select id="clinicStatusFilter" onchange="renderClinicViews()">
+                    <option value="ACTIVE">Active Cases (Excl. Dissolved)</option>
+                    <option value="ALL">All Statuses</option>
+                    <option value="PENDING_REVIEW">Pending Review</option>
+                    <option value="APPROVED">Approved / Reviewed</option>
+                    <option value="EMERGENCY_DISPATCHED">Emergency Dispatched</option>
+                    <option value="DISSOLVED">Dissolved / Closed</option>
+                </select>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Content Container -->
     <main class="doctor-main-container">
-        <!-- Stats -->
-        <section class="queue-stats-bar">
-            <div class="stat-pill">👨‍⚕️ Doctors Active: <strong id="countDoctors">0</strong></div>
-            <div class="stat-pill">📋 Total Cases Registered: <strong id="countTotalCases">0</strong></div>
-            <button type="button" id="refreshAdminBtn" class="override-btn" style="margin-left:auto;">↻ Refresh Data</button>
-        </section>
+        <!-- View 1: Doctors & Cases Under Each Doctor -->
+        <div id="doctorsWithCasesView">
+            <!-- Unassigned / Pending Assignment Banner (if any cases are not yet under a specific doctor) -->
+            <div id="unassignedCasesSection" style="display: none; margin-bottom: 24px;"></div>
 
-        <div class="card-body-grid" style="grid-template-columns: 1fr 2fr;">
-            <!-- Doctors Roster List -->
-            <div class="form-card">
-                <h3 style="margin-top:0; margin-bottom:14px;">Associated Doctors</h3>
-                <div id="doctorsListContainer">
-                    <p class="text-muted">Loading roster...</p>
-                </div>
+            <!-- Grid of Registered Doctors & Cases Under Them -->
+            <div id="doctorsRosterContainer" class="clinic-doctors-grid">
+                <div class="loading-box">Loading associated doctors and their cases...</div>
             </div>
+        </div>
 
-            <!-- Cases Global Overview List -->
-            <div class="form-card">
-                <h3 style="margin-top:0; margin-bottom:14px;">All Registered Patient Cases</h3>
-                <div id="clinicCasesContainer">
-                    <p class="text-muted">Loading cases...</p>
-                </div>
-            </div>
+        <!-- View 2: All Clinic Cases Flat Table / Cards -->
+        <div id="allClinicCasesView" style="display: none;">
+            <div id="allClinicCasesContainer" class="triage-grid"></div>
         </div>
     </main>
 
-    <script src="clinic-auth.js"></script>
+    <!-- Modal: Change 4-Digit Clinic Passcode -->
+    <div id="changePassModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card" style="max-width: 420px;">
+            <div class="modal-header warning-header">
+                <h3>🔑 Update 4-Digit Doctor Passcode</h3>
+            </div>
+            <form id="changePassForm">
+                <div class="modal-body">
+                    <p style="margin-top:0; font-size:0.88rem; color:#475569;">
+                        Enter a new 4-digit passcode for <strong id="modalClinicCodeLabel"></strong>. Doctors signing into this clinic will need this new pass.
+                    </p>
+                    <label for="newClinicPassInput" style="font-weight:700; font-size:0.85rem; display:block; margin-bottom:6px;">New 4-Digit Pass *</label>
+                    <input type="password" id="newClinicPassInput" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" required style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px;">
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="primary-btn">Save New Pass</button>
+                    <button type="button" class="override-btn" onclick="closeChangePassModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="clinic.js"></script>
 </body>
 </html>
