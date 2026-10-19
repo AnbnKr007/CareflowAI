@@ -84,11 +84,14 @@ let currentUser = getCookie('careflow_user') || {
 };
 
 let currentClinic = cleanClinicCode(currentUser.clinicCode) || 'CARE-101';
-let currentDepartment = 'All'; // Always default to 'All' so doctors see all cases from all departments
+let currentDepartment = 'All';
 let currentCasesList = [];
 let pendingPriorityConfirmation = null;
 let pendingParamedicCase = null;
 let pendingSwitchClinicCode = null;
+
+// Cache for one-click English translations so auto-refreshes preserve translated messages
+const doctorChatTranslationCache = {}; // key: `${caseId}_${msgIndex}` -> { translatedText, detectedLanguage }
 
 const PRIORITY_TIER_WEIGHT = {
     CRITICAL: 3,
@@ -108,7 +111,6 @@ function getCurrentDoctorId() {
     return currentUser.userId || 'DOC_CLINICIAN';
 }
 
-// Record what the doctor did in both the clinic's doctor roster and the case object
 async function recordDoctorActivityInClinic(actionSummary) {
     if (!currentClinic) return;
     const docId = getCurrentDoctorId();
@@ -159,7 +161,6 @@ function buildDoctorActionEntry(caseData, actionLabel, detailsText = '') {
 
 function initDoctorProfileBar() {
     const displayDocName = getFormattedDocName();
-    const docId = getCurrentDoctorId();
 
     docNameInput.value = displayDocName;
     docClinicCode.value = currentClinic;
@@ -318,7 +319,6 @@ function sortCasesByPriority(cases) {
     });
 }
 
-// Fetch and Render All Cases in the Clinic across All Departments
 async function fetchCloudQueue(silent = false) {
     const activeClinic = cleanClinicCode(currentClinic || docClinicCode.value);
     if (!activeClinic) return;
@@ -397,6 +397,84 @@ function updateQueueStats(cases) {
     }
     document.getElementById('countTotal').textContent = cases.length;
 }
+
+// ============================================================================
+// ONE-CLICK PATIENT MESSAGE TRANSLATION TO CLEAN ENGLISH (DOCTOR VIEW)
+// ============================================================================
+window.translatePatientMsgToEnglish = async function(caseId, msgIndex) {
+    const caseData = currentCasesList.find(c => c.id === caseId);
+    if (!caseData || !Array.isArray(caseData.messages) || !caseData.messages[msgIndex]) return;
+
+    const msg = caseData.messages[msgIndex];
+    const cacheKey = `${caseId}_${msgIndex}`;
+    const btn = document.getElementById(`docTransBtn_${cacheKey}`);
+    const outBox = document.getElementById(`docTransBox_${cacheKey}`);
+
+    if (!outBox) return;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Translating...';
+    }
+
+    try {
+        const res = await fetch('/api/gemini', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                mode: 'translate',
+                text: msg.text,
+                targetLanguage: 'English',
+                viewerRole: 'doctor'
+            })
+        });
+
+        if (!res.ok) {
+            let errDetail = '';
+            try { const j = await res.json(); errDetail = j.details || j.error || ''; } catch (_) {}
+            throw new Error(errDetail || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        const translatedText = data.translatedText || msg.text;
+        const detectedLanguage = data.detectedLanguage || 'Mixed / Regional';
+
+        doctorChatTranslationCache[cacheKey] = {
+            translatedText,
+            detectedLanguage
+        };
+
+        outBox.style.display = 'block';
+        outBox.innerHTML = `
+            <div class="translated-meta">🌐 Clean English Translation <small>(from ${escapeHtml(detectedLanguage)})</small>:</div>
+            <div class="translated-text">${escapeHtml(translatedText)}</div>
+        `;
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '✓ Translated to English';
+        }
+    } catch (err) {
+        outBox.style.display = 'block';
+        outBox.innerHTML = `<span class="src-unsure">⚠️ Translation unavailable: ${escapeHtml(err.message)}</span>`;
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '🌐 Retry Translate';
+        }
+    }
+};
+
+window.translateAllPatientMsgsInCase = async function(caseId) {
+    const caseData = currentCasesList.find(c => c.id === caseId);
+    if (!caseData || !Array.isArray(caseData.messages)) return;
+
+    const tasks = [];
+    caseData.messages.forEach((m, idx) => {
+        if (m.senderRole === 'patient' && m.text) {
+            tasks.push(window.translatePatientMsgToEnglish(caseId, idx));
+        }
+    });
+    await Promise.all(tasks);
+};
 
 // ============================================================================
 // SOURCE LINKS, VOICE PLAYBACK & DATE FORMATTING HELPERS
@@ -590,16 +668,36 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
         </details>` : '';
     const followUpUpdatedAt = (caseData.followUps && caseData.followUps.updatedAt) || caseData.timestamp;
 
+    // Messages with 1-Click "Translate to English" on Patient messages
     const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
-    const chatHtml = messages.map(m => `
-        <div class="chat-bubble ${m.senderRole === 'doctor' ? 'chat-doctor' : (m.senderRole === 'system' ? 'chat-system' : 'chat-patient')}">
-            <div class="chat-meta">
-                <strong>${escapeHtml(m.senderName)}</strong>
-                <span>${fmtDateTime(m.timestamp)}</span>
+    const chatHtml = messages.map((m, idx) => {
+        const isPatientMsg = m.senderRole === 'patient';
+        const cacheKey = `${caseData.id}_${idx}`;
+        const cached = doctorChatTranslationCache[cacheKey];
+
+        return `
+            <div class="chat-bubble ${m.senderRole === 'doctor' ? 'chat-doctor' : (m.senderRole === 'system' ? 'chat-system' : 'chat-patient')}">
+                <div class="chat-meta">
+                    <strong>${escapeHtml(m.senderName)}</strong>
+                    <span>${fmtDateTime(m.timestamp)}</span>
+                </div>
+                <div class="chat-text">${escapeHtml(m.text)}</div>
+                ${isPatientMsg ? `
+                    <div class="chat-translate-row">
+                        <button type="button" id="docTransBtn_${cacheKey}" class="translate-chip-btn" onclick="translatePatientMsgToEnglish('${caseData.id}', ${idx})">
+                            ${cached ? '✓ Translated to English' : '🌐 Translate to English'}
+                        </button>
+                    </div>
+                    <div id="docTransBox_${cacheKey}" class="chat-translated-box" style="display: ${cached ? 'block' : 'none'};">
+                        ${cached ? `
+                            <div class="translated-meta">🌐 Clean English Translation <small>(from ${escapeHtml(cached.detectedLanguage)})</small>:</div>
+                            <div class="translated-text">${escapeHtml(cached.translatedText)}</div>
+                        ` : ''}
+                    </div>
+                ` : ''}
             </div>
-            <div class="chat-text">${escapeHtml(m.text)}</div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 
     const audits = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
     const auditHtml = audits.map(a => `
@@ -737,7 +835,10 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                 <div class="chat-section doctor-chat-section">
                     <div class="chat-header-bar">
                         <span>💬 Direct Patient Consultation Chat (${messages.length})</span>
-                        <small>Patient replies are automatically summarized &amp; re-triaged by AI</small>
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="translate-chip-btn" onclick="translateAllPatientMsgsInCase('${caseData.id}')">🌐 Translate All Patient Messages → English</button>
+                            <small>Patient replies are automatically summarized &amp; re-triaged by AI</small>
+                        </div>
                     </div>
                     <div class="chat-messages-box" id="docChatBox_${caseData.id}">
                         ${chatHtml}
