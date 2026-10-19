@@ -894,6 +894,7 @@ body {
     color: #475569;
 }
 
+.status-attending { background: #dbeafe; color: #1d4ed8; }
 .status-approved { background: #dcfce7; color: #15803d; }
 .status-pending_review { background: #fef9c3; color: #a16207; }
 .status-emergency_dispatched { background: #fee2e2; color: #b91c1c; }
@@ -1271,7 +1272,7 @@ body:not(.clinic-locked) #clinicAuthGate { display: none; }
 .followup-answered li { font-size: 0.8rem; padding: 5px 0; border-top: 1px dashed #bbf7d0; }
 
 /* ==========================================================================
-   CLINIC PORTAL STYLES
+   CLINIC PORTAL STYLES (READ-ONLY OVERSIGHT)
    ========================================================================== */
 .clinic-auth-tabs {
     display: flex;
@@ -1520,7 +1521,7 @@ body:not(.clinic-locked) #clinicAuthGate { display: none; }
     display: flex;
     flex-direction: column;
     gap: 10px;
-    max-height: 440px;
+    max-height: 460px;
     overflow-y: auto;
     padding-right: 4px;
 }
@@ -1602,8 +1603,44 @@ body:not(.clinic-locked) #clinicAuthGate { display: none; }
     border-top: 1px solid #f1f5f9;
 }
 
-.clinic-assign-control {
+.outcome-pill {
+    font-size: 0.74rem;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 700;
+}
+
+.outcome-attending { background: #dbeafe; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.outcome-approved { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.outcome-emergency { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+.outcome-dissolved { background: #e2e8f0; color: #334155; border: 1px solid #cbd5e1; }
+.outcome-pending { background: #fef9c3; color: #a16207; border: 1px solid #fde68a; }
+
+.clinic-doc-activity-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-left: 3px solid var(--clinic-indigo);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.81rem;
+}
+
+.activity-box-title {
+    font-weight: 700;
+    color: #3730a3;
+    margin-bottom: 4px;
+    font-size: 0.78rem;
+}
+
+.clinic-doc-activity-list {
+    margin: 0;
+    padding-left: 18px;
     display: flex;
-    align-items: center;
-    gap: 6px;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.doc-action-highlight {
+    font-weight: 700;
+    color: #0f172a;
 }
