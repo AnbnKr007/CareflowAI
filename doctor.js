@@ -10,9 +10,11 @@ async function fbFetch(url, opts) {
     }
     return res;
 }
-function cleanClinicCode(v) { return String(v || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''); }
 
-// Cookie Helpers
+function cleanClinicCode(v) {
+    return String(v || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+}
+
 function setCookie(name, value, days = 30) {
     const d = new Date();
     d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
@@ -44,20 +46,6 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;');
 }
 
-// Load or Initialize Doctor Cookie Session
-let currentUser = getCookie('careflow_user');
-if (!currentUser || currentUser.role !== 'doctor') {
-    currentUser = {
-        role: 'doctor',
-        name: currentUser?.name || 'Dr. Ananya Sharma',
-        userId: currentUser?.userId || 'DOC_ANANYA_SHARMA',
-        clinicCode: currentUser?.clinicCode || 'CARE-101',
-        department: currentUser?.department || 'All',
-        savedClinics: []
-    };
-    setCookie('careflow_user', currentUser, 30);
-}
-
 // DOM Elements
 const doctorGreetingHeader = document.getElementById('doctorGreetingHeader');
 const doctorFilterForm = document.getElementById('doctorFilterForm');
@@ -87,8 +75,16 @@ const switchClinicPassInput = document.getElementById('switchClinicPassInput');
 const switchClinicPassError = document.getElementById('switchClinicPassError');
 const cancelClinicSwitchBtn = document.getElementById('cancelClinicSwitchBtn');
 
-let currentClinic = currentUser.clinicCode || 'CARE-101';
-let currentDepartment = currentUser.department || 'All';
+let currentUser = getCookie('careflow_user') || {
+    role: 'doctor',
+    name: 'Dr. Ananya Sharma',
+    userId: 'DOC_ANANYA_SHARMA',
+    clinicCode: 'CARE-101',
+    department: 'All'
+};
+
+let currentClinic = cleanClinicCode(currentUser.clinicCode) || 'CARE-101';
+let currentDepartment = 'All'; // Always default to 'All' so doctors see all cases from all departments
 let currentCasesList = [];
 let pendingPriorityConfirmation = null;
 let pendingParamedicCase = null;
@@ -101,7 +97,7 @@ const PRIORITY_TIER_WEIGHT = {
 };
 
 function getFormattedDocName() {
-    const raw = docNameInput.value.trim() || currentUser.name || 'Dr. Sharma';
+    const raw = (docNameInput && docNameInput.value.trim()) || currentUser.name || 'Dr. Sharma';
     return raw.toLowerCase().startsWith('dr') ? raw : `Dr. ${raw}`;
 }
 
@@ -112,9 +108,9 @@ function getCurrentDoctorId() {
     return currentUser.userId || 'DOC_CLINICIAN';
 }
 
-// Keep doctor's profile & lastActiveAt synced inside the clinic's doctor roster
-async function syncDoctorPresenceInClinic() {
-    if (!currentClinic || !window.CareFlowDoctorAuth || !window.CareFlowDoctorAuth.isClinicUnlocked(currentClinic)) return;
+// Record what the doctor did in both the clinic's doctor roster and the case object
+async function recordDoctorActivityInClinic(actionSummary) {
+    if (!currentClinic) return;
     const docId = getCurrentDoctorId();
     const displayDocName = getFormattedDocName();
     const nowIso = new Date().toISOString();
@@ -126,38 +122,63 @@ async function syncDoctorPresenceInClinic() {
             body: JSON.stringify({
                 id: docId,
                 name: displayDocName,
-                department: currentDepartment || 'All',
+                department: 'All Departments',
                 clinicCode: currentClinic,
-                lastActiveAt: nowIso
+                lastActiveAt: nowIso,
+                lastAction: actionSummary || 'Active in clinic console'
             })
         });
     } catch (e) {}
 }
 
-function initDoctorProfileBar() {
-    docNameInput.value = currentUser.name || 'Dr. Sharma';
-    docClinicCode.value = currentClinic;
-    docDepartment.value = currentDepartment;
+function buildDoctorActionEntry(caseData, actionLabel, detailsText = '') {
+    const docName = getFormattedDocName();
+    const docId = getCurrentDoctorId();
+    const nowIso = new Date().toISOString();
 
+    const doctorActions = Array.isArray(caseData.doctorActions) ? [...caseData.doctorActions] : [];
+    doctorActions.push({
+        doctorId: docId,
+        doctorName: docName,
+        action: actionLabel,
+        details: detailsText,
+        timestamp: nowIso
+    });
+
+    return {
+        attendingDoctorId: docId,
+        attendingDoctorName: docName,
+        lastActionBy: docName,
+        lastActionById: docId,
+        lastActionType: actionLabel,
+        lastActionDetails: detailsText,
+        lastActionAt: nowIso,
+        doctorActions
+    };
+}
+
+function initDoctorProfileBar() {
     const displayDocName = getFormattedDocName();
     const docId = getCurrentDoctorId();
-    currentUser.userId = docId;
+
+    docNameInput.value = displayDocName;
+    docClinicCode.value = currentClinic;
+    docDepartment.value = currentDepartment || 'All';
 
     doctorGreetingHeader.innerHTML = `
         <span class="user-chip">
-            🩺 Welcome, <strong>${escapeHtml(displayDocName)}</strong>
-            <small>(${escapeHtml(docId)} • Clinic: <strong>${escapeHtml(currentClinic)}</strong> 🔐)</small>
+            🩺 <strong>${escapeHtml(displayDocName)}</strong>
+            <small>(Clinic: <strong>${escapeHtml(currentClinic)}</strong> • All Departments)</small>
         </span>
-        <a href="clinic.html" class="ghost-btn sm-btn">🏥 Clinic Portal</a>
+        <a href="clinic.html" class="ghost-btn sm-btn">🏥 View Clinic Console</a>
         <a href="index.html" class="ghost-btn sm-btn">Switch Role</a>
         <button type="button" class="ghost-btn sm-btn" onclick="CareFlowDoctorAuth.signOut()">Sign out</button>
     `;
 
-    // Populate unlocked clinics in quick switcher
     const unlockedList = (window.CareFlowDoctorAuth && window.CareFlowDoctorAuth.getUnlockedClinics)
         ? window.CareFlowDoctorAuth.getUnlockedClinics()
         : [currentClinic];
-    const clinics = Array.from(new Set([...unlockedList, currentClinic]));
+    const clinics = Array.from(new Set([...unlockedList, currentClinic])).filter(Boolean);
     quickClinicSelect.innerHTML = `<option value="">Unlocked Clinics (${clinics.length})...</option>` +
         clinics.map(c => `<option value="${escapeHtml(c)}" ${c === currentClinic ? 'selected' : ''}>🔐 ${escapeHtml(c)}</option>`).join('');
 }
@@ -172,11 +193,9 @@ quickClinicSelect.addEventListener('change', () => {
 doctorFilterForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const requestedClinic = cleanClinicCode(docClinicCode.value) || currentClinic;
-    const requestedDept = docDepartment.value;
+    const requestedDept = docDepartment.value || 'All';
     const docName = getFormattedDocName();
 
-    // If the doctor enters a clinic code that is NOT yet unlocked with a 4-digit pass in this session,
-    // require the 4-digit pass for that clinic first!
     if (window.CareFlowDoctorAuth && !window.CareFlowDoctorAuth.isClinicUnlocked(requestedClinic)) {
         pendingSwitchClinicCode = requestedClinic;
         switchTargetClinicLabel.textContent = requestedClinic;
@@ -189,18 +208,21 @@ doctorFilterForm.addEventListener('submit', async (e) => {
 
     currentClinic = requestedClinic;
     currentDepartment = requestedDept;
-    currentUser.name = docName;
-    currentUser.userId = getCurrentDoctorId();
-    currentUser.clinicCode = currentClinic;
-    currentUser.department = currentDepartment;
+    currentUser = {
+        ...currentUser,
+        role: 'doctor',
+        name: docName,
+        userId: getCurrentDoctorId(),
+        clinicCode: currentClinic,
+        department: currentDepartment
+    };
     setCookie('careflow_user', currentUser, 30);
 
     initDoctorProfileBar();
-    await syncDoctorPresenceInClinic();
+    await recordDoctorActivityInClinic('Loaded clinic triage queue');
     fetchCloudQueue();
 });
 
-// Handle Clinic Switch Passcode Modal
 if (switchClinicPassInput) {
     switchClinicPassInput.addEventListener('input', () => {
         switchClinicPassInput.value = switchClinicPassInput.value.replace(/\D/g, '').slice(0, 4);
@@ -215,7 +237,6 @@ if (clinicSwitchPassForm) {
 
         const pin = switchClinicPassInput.value.trim();
         const docName = getFormattedDocName();
-        const dept = docDepartment.value;
         const submitBtn = document.getElementById('switchClinicSubmitBtn');
 
         submitBtn.disabled = true;
@@ -224,8 +245,7 @@ if (clinicSwitchPassForm) {
         const res = await window.CareFlowDoctorAuth.verifyClinicAndAssociateDoctor(
             docName,
             pendingSwitchClinicCode,
-            pin,
-            dept
+            pin
         );
 
         submitBtn.disabled = false;
@@ -243,17 +263,22 @@ if (clinicSwitchPassForm) {
             res.clinicCode,
             res.clinicName,
             res.displayName,
-            res.department,
             res.doctorId
         );
 
         clinicPassModal.style.display = 'none';
         currentClinic = res.clinicCode;
-        currentDepartment = dept;
-        currentUser.name = res.displayName;
-        currentUser.userId = res.doctorId;
-        currentUser.clinicCode = currentClinic;
-        currentUser.department = currentDepartment;
+        currentDepartment = 'All';
+        docDepartment.value = 'All';
+
+        currentUser = {
+            ...currentUser,
+            role: 'doctor',
+            name: res.displayName,
+            userId: res.doctorId,
+            clinicCode: currentClinic,
+            department: 'All'
+        };
         setCookie('careflow_user', currentUser, 30);
 
         pendingSwitchClinicCode = null;
@@ -272,10 +297,12 @@ if (cancelClinicSwitchBtn) {
 }
 
 refreshQueueBtn.addEventListener('click', () => fetchCloudQueue());
-docDepartment.addEventListener('change', () => doctorFilterForm.dispatchEvent(new Event('submit')));
+docDepartment.addEventListener('change', () => {
+    currentDepartment = docDepartment.value || 'All';
+    fetchCloudQueue();
+});
 docStatusFilter.addEventListener('change', () => fetchCloudQueue());
 
-// Sort comparator: strictly by Priority Tier (CRITICAL > URGENT > ROUTINE), then by manualOrderOffset (high to low), then newest timestamp
 function sortCasesByPriority(cases) {
     return cases.sort((a, b) => {
         const prioA = (a.triage && a.triage.priority) || 'ROUTINE';
@@ -287,41 +314,54 @@ function sortCasesByPriority(cases) {
         const offsetB = typeof b.manualOrderOffset === 'number' ? b.manualOrderOffset : 0;
         if (offsetB !== offsetA) return offsetB - offsetA;
 
-        return new Date(b.timestamp) - new Date(a.timestamp);
+        return new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
     });
 }
 
-// Fetch and Render Prioritized Cases (Strictly gated by Clinic Pass verification)
+// Fetch and Render All Cases in the Clinic across All Departments
 async function fetchCloudQueue(silent = false) {
-    if (window.CareFlowDoctorAuth && !window.CareFlowDoctorAuth.isClinicUnlocked(currentClinic)) {
-        triageQueue.innerHTML = `<div class="status-banner status-error">🔒 Access Denied: Please sign in with the 4-digit pass for clinic <strong>${escapeHtml(currentClinic)}</strong>.</div>`;
-        return;
-    }
+    const activeClinic = cleanClinicCode(currentClinic || docClinicCode.value);
+    if (!activeClinic) return;
+    currentClinic = activeClinic;
 
-    if (!silent) triageQueue.innerHTML = '<div class="loading-box">Syncing prioritized queue from hospital cloud...</div>';
+    if (!silent) {
+        triageQueue.innerHTML = `<div class="loading-box">Syncing all cases for clinic <strong>${escapeHtml(currentClinic)}</strong>...</div>`;
+    }
 
     try {
         const response = await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases.json`);
         const data = await response.json();
 
-        if (!data) {
+        if (!data || typeof data !== 'object') {
             updateQueueStats([]);
-            triageQueue.innerHTML = `<div class="empty-state"><h3>No cases found in clinic ${escapeHtml(currentClinic)}</h3><p>Patients can submit cases using code <strong>${escapeHtml(currentClinic)}</strong>.</p></div>`;
+            triageQueue.innerHTML = `
+                <div class="empty-state">
+                    <h3>No patient cases found in clinic ${escapeHtml(currentClinic)}</h3>
+                    <p>Patients can submit cases to this clinic on the Patient Portal using code <strong>${escapeHtml(currentClinic)}</strong>.</p>
+                </div>`;
             return;
         }
 
-        const allCases = Object.values(data).filter(Boolean);
-        const statusFilter = docStatusFilter.value;
+        const allCases = Object.entries(data)
+            .filter(([, val]) => val && typeof val === 'object')
+            .map(([key, val]) => ({
+                ...val,
+                id: val.id || key,
+                clinicCode: val.clinicCode || currentClinic
+            }));
+
+        const statusFilter = docStatusFilter.value || 'ALL';
+        const deptFilter = docDepartment.value || 'All';
 
         const filtered = allCases.filter(c => {
             const dept = (c.triage && c.triage.suggestedDepartment) || 'General Medicine';
-            const matchDept = currentDepartment === 'All' || dept.toLowerCase().includes(currentDepartment.toLowerCase());
+            const matchDept = deptFilter === 'All' || dept.toLowerCase().includes(deptFilter.toLowerCase());
 
             let matchStatus = true;
             if (statusFilter === 'ACTIVE') {
                 matchStatus = c.status !== 'DISSOLVED';
             } else if (statusFilter !== 'ALL') {
-                matchStatus = c.status === statusFilter;
+                matchStatus = (c.status || 'PENDING_REVIEW') === statusFilter;
             }
             return matchDept && matchStatus;
         });
@@ -331,7 +371,11 @@ async function fetchCloudQueue(silent = false) {
 
         triageQueue.innerHTML = '';
         if (currentCasesList.length === 0) {
-            triageQueue.innerHTML = `<div class="empty-state"><h3>No matching cases for ${escapeHtml(currentDepartment)} (${escapeHtml(statusFilter)})</h3></div>`;
+            triageQueue.innerHTML = `
+                <div class="empty-state">
+                    <h3>No cases match the selected filter (${escapeHtml(deptFilter)} • ${escapeHtml(statusFilter)})</h3>
+                    <p>Total cases in clinic <strong>${escapeHtml(currentClinic)}</strong>: ${allCases.length}. Set filters above to "All Departments" and "All Cases" to see all cases.</p>
+                </div>`;
             return;
         }
 
@@ -339,7 +383,7 @@ async function fetchCloudQueue(silent = false) {
             triageQueue.appendChild(renderDoctorCaseCard(caseData, index, currentCasesList.length));
         });
     } catch (err) {
-        triageQueue.innerHTML = `<div class="status-banner status-error">Error loading cloud queue: ${escapeHtml(err.message)}</div>`;
+        triageQueue.innerHTML = `<div class="status-banner status-error">Error loading clinic queue: ${escapeHtml(err.message)}</div>`;
     }
 }
 
@@ -347,6 +391,10 @@ function updateQueueStats(cases) {
     document.getElementById('countCritical').textContent = cases.filter(c => c.triage?.priority === 'CRITICAL').length;
     document.getElementById('countUrgent').textContent = cases.filter(c => c.triage?.priority === 'URGENT').length;
     document.getElementById('countRoutine').textContent = cases.filter(c => (c.triage?.priority || 'ROUTINE') === 'ROUTINE').length;
+    const attEl = document.getElementById('countAttending');
+    if (attEl) {
+        attEl.textContent = cases.filter(c => c.status === 'ATTENDING' || c.attendingDoctorName || c.reviewedBy).length;
+    }
     document.getElementById('countTotal').textContent = cases.length;
 }
 
@@ -416,9 +464,6 @@ window.loadVoiceNote = async function(caseId) {
     }
 };
 
-// ============================================================================
-// DYNAMIC FOLLOW-UP QUESTIONS
-// ============================================================================
 function getFollowUpState(caseData) {
     const fu = caseData.followUps || null;
     const history = fu && Array.isArray(fu.history) ? fu.history : [];
@@ -461,10 +506,8 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
     const isDissolved = caseData.status === 'DISSOLVED';
     const isEmergency = caseData.status === 'EMERGENCY_DISPATCHED' || !!caseData.paramedicDispatch;
 
-    const assignedDocName = caseData.assignedDoctorName || caseData.reviewedBy || null;
-    const myDocId = getCurrentDoctorId();
-    const isAssignedToMe = (caseData.assignedDoctorId && caseData.assignedDoctorId === myDocId) ||
-        (assignedDocName && assignedDocName.toLowerCase() === getFormattedDocName().toLowerCase());
+    const handlerDoc = caseData.attendingDoctorName || caseData.reviewedBy || caseData.lastActionBy || null;
+    const lastActionLabel = caseData.lastActionType || (caseData.status === 'ATTENDING' ? 'Attending Case' : null);
 
     const symptomsHtml = Array.isArray(t.standardizedSymptoms) && t.standardizedSymptoms.length
         ? t.standardizedSymptoms.map(s => `<li>${escapeHtml(s)}</li>`).join('')
@@ -629,8 +672,8 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                             ${escapeHtml(caseData.patientName)}
                             <span class="demog-pill">${escapeHtml(caseData.patientAge)}y • ${escapeHtml(caseData.patientGender)}</span>
                             <span class="status-pill status-${(caseData.status || 'PENDING_REVIEW').toLowerCase()}">${escapeHtml((caseData.status || 'PENDING_REVIEW').replace(/_/g, ' '))}</span>
-                            <span class="doctor-owner-pill ${isAssignedToMe ? 'owner-me' : ''}">
-                                🩺 ${assignedDocName ? 'Under ' + escapeHtml(assignedDocName) : 'Unassigned'}
+                            <span class="doctor-owner-pill ${handlerDoc ? 'owner-me' : ''}">
+                                🩺 ${handlerDoc ? `${escapeHtml(handlerDoc)}${lastActionLabel ? ' • ' + escapeHtml(lastActionLabel) : ''}` : 'Awaiting Doctor Attendance'}
                             </span>
                         </h3>
                         <div class="patient-meta">
@@ -641,7 +684,6 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                     </div>
 
                     <div class="header-badges">
-                        ${!isAssignedToMe ? `<button type="button" class="chip-btn" onclick="claimCaseForDoctor('${caseData.id}')">📌 Claim Case</button>` : ''}
                         <span class="priority-badge">${escapeHtml(priority)}</span>
                         <select class="priority-select-inline" onchange="handleDirectPrioritySelect('${caseData.id}', this.value)" title="Change Priority Tier">
                             <option value="CRITICAL" ${priority === 'CRITICAL' ? 'selected' : ''}>🔴 CRITICAL</option>
@@ -653,7 +695,7 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
 
                 ${isEmergency ? `
                     <div class="emergency-banner">
-                        🚑 <strong>PARAMEDIC TEAM DISPATCHED:</strong> Forwarded by ${escapeHtml(caseData.paramedicDispatch?.dispatchedBy \vert{}\vert{} 'Doctor')} at ${escapeHtml(caseData.paramedicDispatch?.dispatchedAt || '')} (Dispatch Ref: ${escapeHtml(caseData.paramedicDispatch?.dispatchId || 'EMS-911')}).
+                        🚑 <strong>PARAMEDIC TEAM DISPATCHED:</strong> Forwarded by ${escapeHtml(caseData.paramedicDispatch?.dispatchedBy || 'Doctor')} at ${escapeHtml(caseData.paramedicDispatch?.dispatchedAt || '')} (Dispatch Ref: ${escapeHtml(caseData.paramedicDispatch?.dispatchId || 'EMS-911')}).
                     </div>
                 ` : ''}
 
@@ -716,6 +758,9 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
 
                 <!-- Action Controls -->
                 <div class="card-actions-bar">
+                    ${!isDissolved ? `
+                        <button type="button" class="secondary-btn" onclick="attendToCase('${caseData.id}')">🩺 Attend Case</button>
+                    ` : ''}
                     <button type="button" class="approve-btn" onclick="approveAndSend('${caseData.id}')">✓ Approve &amp; Save Referral Note</button>
                     <button type="button" class="emergency-btn" onclick="openParamedicDispatchModal('${caseData.id}')">🚨 Mark Emergency (Paramedic Team)</button>
                     ${!isDissolved ? `
@@ -737,36 +782,50 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
     return card;
 }
 
-// Doctor claims a case so it appears under them on the Clinic Portal
-window.claimCaseForDoctor = async function(caseId) {
+// ============================================================================
+// DOCTOR ACTION: ATTEND TO CASE (ANY DEPARTMENT)
+// ============================================================================
+window.attendToCase = async function(caseId) {
     const caseData = currentCasesList.find(c => c.id === caseId);
     if (!caseData) return;
 
     const docName = getFormattedDocName();
-    const docId = getCurrentDoctorId();
     const nowIso = new Date().toISOString();
+    const dept = caseData.triage?.suggestedDepartment || 'General Medicine';
 
-    const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
+    const messages = Array.isArray(caseData.messages) ? [...caseData.messages] : [];
+    messages.push({
+        id: 'MSG-' + Date.now(),
+        senderRole: 'system',
+        senderName: 'CareFlow Clinic Console',
+        text: `${docName} is now attending to your case (#${caseId} • ${dept}).`,
+        timestamp: nowIso
+    });
+
+    const auditLog = Array.isArray(caseData.auditLog) ? [...caseData.auditLog] : [];
     auditLog.push({
         timestamp: nowIso,
         actor: docName,
-        action: `Claimed case under ${docName} (${docId}).`
+        action: `Started attending case (#${caseId} • ${dept}).`
     });
+
+    const actionMeta = buildDoctorActionEntry(caseData, 'Attending Case', `Attending ${dept} case`);
 
     try {
         await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                assignedDoctorId: docId,
-                assignedDoctorName: docName,
+                status: caseData.status === 'EMERGENCY_DISPATCHED' ? 'EMERGENCY_DISPATCHED' : 'ATTENDING',
+                ...actionMeta,
+                messages,
                 auditLog
             })
         });
-        await syncDoctorPresenceInClinic();
+        await recordDoctorActivityInClinic(`Attending Case #${caseId} (${caseData.patientName})`);
         await fetchCloudQueue();
     } catch (err) {
-        alert('Failed to claim case: ' + err.message);
+        alert('Failed to mark case as attending: ' + err.message);
     }
 };
 
@@ -808,19 +867,23 @@ async function swapOrderWithinTier(movingCase, neighborCase, direction, forcedNe
     const nowIso = new Date().toISOString();
     const docActor = getFormattedDocName();
 
-    const auditLog = Array.isArray(movingCase.auditLog) ? movingCase.auditLog : [];
+    const auditLog = Array.isArray(movingCase.auditLog) ? [...movingCase.auditLog] : [];
+    const actionDesc = forcedNewPriority
+        ? `Moved case ${direction} and changed priority from ${movingCase.triage?.priority} → ${forcedNewPriority}`
+        : `Reordered case ${direction} in clinic queue`;
+
     auditLog.push({
         timestamp: nowIso,
         actor: docActor,
-        action: forcedNewPriority
-            ? `Moved case ${direction} across tier and confirmed priority change from ${movingCase.triage?.priority} → ${forcedNewPriority}.`
-            : `Reordered case ${direction} in clinic queue via priority arrow.`
+        action: actionDesc
     });
 
     const updatedTriage = {
         ...(movingCase.triage || {}),
         priority: updatedPriority
     };
+
+    const actionMeta = buildDoctorActionEntry(movingCase, 'Reordered / Reprioritized Queue', actionDesc);
 
     await Promise.all([
         fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${movingCase.id}.json`, {
@@ -829,6 +892,7 @@ async function swapOrderWithinTier(movingCase, neighborCase, direction, forcedNe
             body: JSON.stringify({
                 manualOrderOffset: newMovingOffset,
                 triage: updatedTriage,
+                ...actionMeta,
                 auditLog
             })
         }),
@@ -841,6 +905,7 @@ async function swapOrderWithinTier(movingCase, neighborCase, direction, forcedNe
         })
     ]);
 
+    await recordDoctorActivityInClinic(`${actionDesc} (#${movingCase.id})`);
     await fetchCloudQueue();
 }
 
@@ -890,23 +955,25 @@ window.handleDirectPrioritySelect = async function(caseId, newPriority) {
 
     const nowIso = new Date().toISOString();
     const docActor = getFormattedDocName();
-    const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
+    const auditLog = Array.isArray(caseData.auditLog) ? [...caseData.auditLog] : [];
     auditLog.push({
         timestamp: nowIso,
         actor: docActor,
         action: `Changed case priority from ${oldPriority} → ${newPriority}.`
     });
 
+    const actionMeta = buildDoctorActionEntry(caseData, `Changed Priority (${oldPriority} → ${newPriority})`, `Priority set to ${newPriority}`);
+
     await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             triage: { ...(caseData.triage || {}), priority: newPriority },
-            assignedDoctorId: caseData.assignedDoctorId || getCurrentDoctorId(),
-            assignedDoctorName: caseData.assignedDoctorName || docActor,
+            ...actionMeta,
             auditLog
         })
     });
+    await recordDoctorActivityInClinic(`Changed priority of Case #${caseId} to ${newPriority}`);
     await fetchCloudQueue();
 };
 
@@ -932,10 +999,9 @@ window.sendDoctorChatMessage = async function(caseId) {
     if (!caseData) return;
 
     const docName = getFormattedDocName();
-    const docId = getCurrentDoctorId();
     const nowIso = new Date().toISOString();
 
-    const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
+    const messages = Array.isArray(caseData.messages) ? [...caseData.messages] : [];
     messages.push({
         id: 'MSG-' + Date.now(),
         senderRole: 'doctor',
@@ -944,20 +1010,22 @@ window.sendDoctorChatMessage = async function(caseId) {
         timestamp: nowIso
     });
 
-    const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
+    const auditLog = Array.isArray(caseData.auditLog) ? [...caseData.auditLog] : [];
     auditLog.push({
         timestamp: nowIso,
         actor: docName,
         action: `Sent clinical chat update to patient: "${text.substring(0, 80)}"`
     });
 
+    const actionMeta = buildDoctorActionEntry(caseData, 'Attending & Chatted with Patient', text.substring(0, 120));
+
     const fuState = getFollowUpState(caseData);
     const usedQs = findUsedSuggestions(text, fuState.active, input.dataset.suggestion || '');
     const patch = {
+        status: caseData.status === 'PENDING_REVIEW' ? 'ATTENDING' : caseData.status,
         messages,
         auditLog,
-        assignedDoctorId: docId,
-        assignedDoctorName: docName
+        ...actionMeta
     };
     if (usedQs.length) {
         patch.followUps = {
@@ -983,7 +1051,7 @@ window.sendDoctorChatMessage = async function(caseId) {
         });
         input.value = '';
         input.dataset.suggestion = '';
-        await syncDoctorPresenceInClinic();
+        await recordDoctorActivityInClinic(`Messaged patient on Case #${caseId}`);
         await fetchCloudQueue();
     } catch (err) {
         alert("Failed to send chat message: " + err.message);
@@ -997,17 +1065,18 @@ window.approveAndSend = async function(caseId) {
     const caseData = currentCasesList.find(c => c.id === caseId);
     if (!caseData) return;
 
-    const note = document.getElementById(`doctorNote_${caseId}`).value.trim();
+    const note = document.getElementById(`doctorNote_${caseId}`).value.trim() || "Triage validated. Proceed to OPD consultation.";
     const docName = getFormattedDocName();
-    const docId = getCurrentDoctorId();
     const nowIso = new Date().toISOString();
 
-    const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
+    const auditLog = Array.isArray(caseData.auditLog) ? [...caseData.auditLog] : [];
     auditLog.push({
         timestamp: nowIso,
         actor: docName,
         action: `Approved and finalized triage/referral note.`
     });
+
+    const actionMeta = buildDoctorActionEntry(caseData, 'Approved Referral Note', note.substring(0, 140));
 
     try {
         await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
@@ -1015,15 +1084,14 @@ window.approveAndSend = async function(caseId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 status: caseData.status === 'EMERGENCY_DISPATCHED' ? 'EMERGENCY_DISPATCHED' : 'APPROVED',
-                doctorNote: note || "Triage validated. Proceed to OPD consultation.",
+                doctorNote: note,
                 reviewedBy: docName,
                 reviewedAt: new Date().toLocaleString(),
-                assignedDoctorId: docId,
-                assignedDoctorName: docName,
+                ...actionMeta,
                 auditLog
             })
         });
-        await syncDoctorPresenceInClinic();
+        await recordDoctorActivityInClinic(`Approved referral note on Case #${caseId}`);
         await fetchCloudQueue();
     } catch (err) {
         alert("Failed to save approval: " + err.message);
@@ -1035,10 +1103,9 @@ window.requestPatientClosure = async function(caseId) {
     if (!caseData) return;
 
     const docName = getFormattedDocName();
-    const docId = getCurrentDoctorId();
     const nowIso = new Date().toISOString();
 
-    const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
+    const messages = Array.isArray(caseData.messages) ? [...caseData.messages] : [];
     messages.push({
         id: 'MSG-' + Date.now(),
         senderRole: 'doctor',
@@ -1047,12 +1114,14 @@ window.requestPatientClosure = async function(caseId) {
         timestamp: nowIso
     });
 
-    const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
+    const auditLog = Array.isArray(caseData.auditLog) ? [...caseData.auditLog] : [];
     auditLog.push({
         timestamp: nowIso,
         actor: docName,
         action: 'Requested patient confirmation to close/dissolve case upon recovery.'
     });
+
+    const actionMeta = buildDoctorActionEntry(caseData, 'Requested Patient Closure', 'Asked patient to confirm recovery');
 
     await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
         method: 'PATCH',
@@ -1060,12 +1129,12 @@ window.requestPatientClosure = async function(caseId) {
         body: JSON.stringify({
             status: 'CLOSURE_REQUESTED',
             closureRequestedBy: docName,
-            assignedDoctorId: docId,
-            assignedDoctorName: docName,
+            ...actionMeta,
             messages,
             auditLog
         })
     });
+    await recordDoctorActivityInClinic(`Requested closure on Case #${caseId}`);
     await fetchCloudQueue();
 };
 
@@ -1075,10 +1144,9 @@ window.dissolveCaseDirectly = async function(caseId) {
     if (!confirm(`Dissolve and close Case #${caseId} (${caseData.patientName})?`)) return;
 
     const docName = getFormattedDocName();
-    const docId = getCurrentDoctorId();
     const nowIso = new Date().toISOString();
 
-    const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
+    const messages = Array.isArray(caseData.messages) ? [...caseData.messages] : [];
     messages.push({
         id: 'MSG-' + Date.now(),
         senderRole: 'system',
@@ -1087,24 +1155,28 @@ window.dissolveCaseDirectly = async function(caseId) {
         timestamp: nowIso
     });
 
-    const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
+    const auditLog = Array.isArray(caseData.auditLog) ? [...caseData.auditLog] : [];
     auditLog.push({
         timestamp: nowIso,
         actor: docName,
         action: 'Dissolved/closed case directly.'
     });
 
+    const actionMeta = buildDoctorActionEntry(caseData, 'Dissolved Case', `Marked Case #${caseId} as resolved and dissolved`);
+
     await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             status: 'DISSOLVED',
-            assignedDoctorId: docId,
-            assignedDoctorName: docName,
+            dissolvedBy: docName,
+            dissolvedAt: nowIso,
+            ...actionMeta,
             messages,
             auditLog
         })
     });
+    await recordDoctorActivityInClinic(`Dissolved Case #${caseId} (${caseData.patientName})`);
     await fetchCloudQueue();
 };
 
@@ -1121,6 +1193,7 @@ window.purgeRecord = async function(caseId) {
         if (caseData && caseData.patientUserId) {
             await fbFetch(`${FIREBASE_URL}/patients/${caseData.patientUserId}/cases/${caseId}.json`, { method: 'DELETE' });
         }
+        await recordDoctorActivityInClinic(`Purged Case #${caseId}`);
         await fetchCloudQueue();
     } catch (err) {
         alert("Failed to purge record: " + err.message);
@@ -1160,7 +1233,6 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
     if (!pendingParamedicCase) return;
     const caseData = pendingParamedicCase;
     const docName = getFormattedDocName();
-    const docId = getCurrentDoctorId();
     const dispatchNote = document.getElementById('paramedicNotesInput')?.value || 'Immediate ALS Paramedic response requested.';
     const dispatchId = 'EMS-' + Math.floor(10000 + Math.random() * 90000);
     const nowTime = new Date().toLocaleString();
@@ -1173,7 +1245,7 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
         instructions: dispatchNote
     };
 
-    const messages = Array.isArray(caseData.messages) ? caseData.messages : [];
+    const messages = Array.isArray(caseData.messages) ? [...caseData.messages] : [];
     messages.push({
         id: 'MSG-' + Date.now(),
         senderRole: 'system',
@@ -1182,12 +1254,14 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
         timestamp: nowIso
     });
 
-    const auditLog = Array.isArray(caseData.auditLog) ? caseData.auditLog : [];
+    const auditLog = Array.isArray(caseData.auditLog) ? [...caseData.auditLog] : [];
     auditLog.push({
         timestamp: nowIso,
         actor: docName,
         action: `Marked case as EMERGENCY and dispatched Hospital Paramedic Team (Ref: ${dispatchId}).`
     });
+
+    const actionMeta = buildDoctorActionEntry(caseData, 'Emergency Paramedic Dispatched', `Ref ${dispatchId}: ${dispatchNote}`);
 
     await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseData.id}.json`, {
         method: 'PATCH',
@@ -1196,8 +1270,7 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
             status: 'EMERGENCY_DISPATCHED',
             triage: { ...(caseData.triage || {}), priority: 'CRITICAL' },
             paramedicDispatch,
-            assignedDoctorId: docId,
-            assignedDoctorName: docName,
+            ...actionMeta,
             messages,
             auditLog
         })
@@ -1209,6 +1282,7 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
         banner.innerHTML = `✅ <strong>Patient Details Forwarded to Hospital Paramedic Team!</strong><br>Dispatch ID: <strong>${dispatchId}</strong> | Authorized by: <strong>${escapeHtml(docName)}</strong> at ${nowTime}.`;
     }
     confirmParamedicDispatchBtn.style.display = 'none';
+    await recordDoctorActivityInClinic(`Dispatched Paramedics (${dispatchId}) on Case #${caseData.id}`);
     await fetchCloudQueue();
 });
 
@@ -1218,42 +1292,47 @@ closeParamedicModalBtn.addEventListener('click', () => {
 });
 
 // ============================================================================
-// START-UP (only after the doctor has verified Clinic Code + 4-digit Clinic Pass)
+// START-UP
 // ============================================================================
 let dashboardStarted = false;
 
-function startDoctorDashboard(sessionDetail) {
-    if (dashboardStarted) return;
-    dashboardStarted = true;
-
+window.startDoctorDashboard = function(sessionDetail) {
     const session = sessionDetail || (window.CareFlowDoctorAuth && window.CareFlowDoctorAuth.getSession());
     if (session) {
-        currentUser.role = 'doctor';
-        currentUser.name = session.name || currentUser.name;
-        currentUser.userId = session.doctorId || currentUser.userId;
-        currentUser.clinicCode = session.clinicCode || currentUser.clinicCode;
-        currentUser.department = session.department || currentUser.department || 'All';
-        currentClinic = currentUser.clinicCode;
-        currentDepartment = currentUser.department;
+        currentClinic = cleanClinicCode(session.clinicCode) || currentClinic;
+        currentDepartment = 'All';
+        currentUser = {
+            role: 'doctor',
+            name: session.name || currentUser.name,
+            userId: session.doctorId || currentUser.userId,
+            clinicCode: currentClinic,
+            department: 'All'
+        };
         setCookie('careflow_user', currentUser, 30);
     }
+
+    if (docDepartment) docDepartment.value = 'All';
+    if (docStatusFilter) docStatusFilter.value = 'ALL';
 
     initDoctorProfileBar();
     fetchCloudQueue();
 
-    setInterval(() => {
-        const modalOpen = priorityConfirmModal.style.display !== 'none' ||
-            paramedicModal.style.display !== 'none' ||
-            (clinicPassModal && clinicPassModal.style.display !== 'none');
-        const typing = Array.from(document.querySelectorAll('.chat-input-row input')).some(i => i.value || i === document.activeElement);
-        const editing = Array.from(document.querySelectorAll('.referral-note-box textarea')).some(t => t.value !== t.defaultValue || t === document.activeElement);
-        const playing = Array.from(document.querySelectorAll('audio')).some(a => !a.paused && !a.ended);
-        if (!modalOpen && !typing && !editing && !playing && !document.hidden) fetchCloudQueue(true);
-    }, 10000);
-}
+    if (!dashboardStarted) {
+        dashboardStarted = true;
+        setInterval(() => {
+            const modalOpen = priorityConfirmModal.style.display !== 'none' ||
+                paramedicModal.style.display !== 'none' ||
+                (clinicPassModal && clinicPassModal.style.display !== 'none');
+            const typing = Array.from(document.querySelectorAll('.chat-input-row input')).some(i => i.value || i === document.activeElement);
+            const editing = Array.from(document.querySelectorAll('.referral-note-box textarea')).some(t => t.value !== t.defaultValue || t === document.activeElement);
+            const playing = Array.from(document.querySelectorAll('audio')).some(a => !a.paused && !a.ended);
+            if (!modalOpen && !typing && !editing && !playing && !document.hidden) fetchCloudQueue(true);
+        }, 10000);
+    }
+};
 
 if (window.CareFlowDoctorAuth && window.CareFlowDoctorAuth.isAuthenticated()) {
-    startDoctorDashboard();
+    window.startDoctorDashboard();
 } else {
-    window.addEventListener('careflow-doctor-login', (e) => startDoctorDashboard(e.detail), { once: true });
+    window.addEventListener('careflow-doctor-login', (e) => window.startDoctorDashboard(e.detail), { once: true });
 }
