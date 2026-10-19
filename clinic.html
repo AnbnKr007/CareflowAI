@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinic Admin Portal — CareFlow AI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="portal-body clinic-locked">
+    
+    <!-- Clinic Auth Gate -->
+    <div id="clinicLoginGate" class="doctor-login-gate" role="dialog" aria-modal="true">
+        <form id="clinicLoginForm" class="doctor-login-card" autocomplete="off">
+            <div class="login-brand">🏥 CareFlow AI</div>
+            <h2 id="clinicGateTitle">Clinic Portal</h2>
+            
+            <div class="clinic-auth-toggle">
+                <label><input type="radio" name="authMode" value="login" checked> Sign In</label>
+                <label><input type="radio" name="authMode" value="register"> Register Clinic</label>
+            </div>
+
+            <div id="clinicNameGroup" style="display:none;">
+                <label for="clinicNameInput">Clinic Full Name</label>
+                <input type="text" id="clinicNameInput" placeholder="e.g. City Care Hospital">
+            </div>
+
+            <label for="clinicCodeInput">Clinic Code</label>
+            <input type="text" id="clinicCodeInput" placeholder="e.g. CITY-202" style="text-transform: uppercase;" required>
+
+            <label for="clinicPassInput">Secure 4-Digit Pass</label>
+            <input type="password" id="clinicPassInput" class="pin-input" maxlength="4" pattern="\d{4}" placeholder="••••" required>
+
+            <div id="clinicLoginError" class="login-error" style="display: none;"></div>
+
+            <button type="submit" class="primary-btn full-width" id="clinicAuthBtn">Sign In →</button>
+            <a href="index.html" class="login-back">← Back to home</a>
+        </form>
+    </div>
+
+    <!-- Top Admin Bar -->
+    <header class="portal-topbar">
+        <div class="topbar-left">
+            <a href="index.html" class="back-link">← Home</a>
+            <span class="badge badge-clinic">🏥 Clinic Administration</span>
+        </div>
+        <div id="clinicGreetingHeader" class="topbar-right">
+            <!-- Populated via JS -->
+        </div>
+    </header>
+
+    <main class="doctor-main-container">
+        <!-- Stats -->
+        <section class="queue-stats-bar">
+            <div class="stat-pill">👨‍⚕️ Doctors Active: <strong id="countDoctors">0</strong></div>
+            <div class="stat-pill">📋 Total Cases Registered: <strong id="countTotalCases">0</strong></div>
+            <button type="button" id="refreshAdminBtn" class="override-btn" style="margin-left:auto;">↻ Refresh Data</button>
+        </section>
+
+        <div class="card-body-grid" style="grid-template-columns: 1fr 2fr;">
+            <!-- Doctors Roster List -->
+            <div class="form-card">
+                <h3 style="margin-top:0; margin-bottom:14px;">Associated Doctors</h3>
+                <div id="doctorsListContainer">
+                    <p class="text-muted">Loading roster...</p>
+                </div>
+            </div>
+
+            <!-- Cases Global Overview List -->
+            <div class="form-card">
+                <h3 style="margin-top:0; margin-bottom:14px;">All Registered Patient Cases</h3>
+                <div id="clinicCasesContainer">
+                    <p class="text-muted">Loading cases...</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="clinic-auth.js"></script>
+    <script src="clinic.js"></script>
+</body>
+</html>
