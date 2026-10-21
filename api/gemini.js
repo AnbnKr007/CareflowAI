@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     }
 
     const API_KEY = process.env.GEMINI_API_KEY;
-    if (!API_KEY) {
+    if (!API_KEY && (req.body && req.body.mode) !== 'translate') {
         return res.status(500).json({ error: "Missing GEMINI_API_KEY in environment variables." });
     }
 
@@ -87,7 +87,7 @@ export default async function handler(req, res) {
         const mode = body.mode || 'intake';
 
         // =========================================================================
-        // MODE 0: ONE-CLICK CHAT MESSAGE TRANSLATION (LIGHTER MODEL)
+        // MODE 0: ONE-CLICK CHAT MESSAGE TRANSLATION (LOCAL OLLAMA - qwen3.5:4b)
         // =========================================================================
         if (mode === 'translate') {
             const { text, targetLanguage = 'English', viewerRole = 'doctor' } = body;
@@ -96,6 +96,9 @@ export default async function handler(req, res) {
             if (!rawText) {
                 return res.status(400).json({ error: 'No message text provided for translation.' });
             }
+
+            const OLLAMA_URL = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+            const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen3.5:4b';
 
             const translatePrompt = viewerRole === 'doctor'
                 ? `You are a clinical medical translator assisting a doctor.
@@ -124,26 +127,45 @@ Return STRICT JSON matching this schema:
     "detectedLanguage": "Source language"
 }`;
 
-            const transResp = await geminiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent`, {
+            const transResp = await fetch(`${OLLAMA_URL}/api/chat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
+                },
                 body: JSON.stringify({
-                    contents: [{ parts: [{ text: translatePrompt }] }],
-                    generationConfig: {
-                        response_mime_type: "application/json",
-                        temperature: 0.1
+                    model: OLLAMA_MODEL,
+                    messages: [{ role: 'user', content: translatePrompt }],
+                    stream: false,
+                    think: false,
+                    keep_alive: '30m',
+                    format: {
+                        type: 'object',
+                        properties: {
+                            translatedText: { type: 'string' },
+                            detectedLanguage: { type: 'string' }
+                        },
+                        required: ['translatedText', 'detectedLanguage']
+                    },
+                    options: {
+                        temperature: 0.1,
+                        num_ctx: 2048
                     }
                 })
             });
 
             if (!transResp.ok) {
                 const errText = await transResp.text();
-                throw new Error(`Translation API failed: ${errText}`);
+                throw new Error(`Ollama Translation API failed (${transResp.status}): ${errText}`);
             }
 
             const transData = await transResp.json();
-            const parsedTrans = JSON.parse(transData.candidates[0].content.parts[0].text);
-            parsedTrans.modelUsed = CHAT_MODEL;
+            let rawContent = (transData && transData.message && transData.message.content) || transData.response || '';
+            rawContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+            rawContent = rawContent.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+
+            const parsedTrans = JSON.parse(rawContent);
+            parsedTrans.modelUsed = OLLAMA_MODEL;
             parsedTrans.targetLanguage = targetLanguage;
 
             return res.status(200).json(parsedTrans);
