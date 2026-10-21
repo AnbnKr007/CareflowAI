@@ -42,14 +42,18 @@ export default async function handler(req, res) {
     // Gemini call with automatic retries (429 / 5xx / network errors) and a time budget, so a
     // momentary overload never surfaces to the patient as a failure.
     const startedAt = Date.now();
-    // If the configured model is overloaded, rate-limited or not found, fall back to these models.
-    const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || 'gemini-2.5-flash,gemini-2.5-flash-lite')
-        .split(',').map(x => x.trim()).filter(Boolean);
+    // If a model is overloaded, rate-limited or not found, fall back to the OTHER models already configured
+    // for this project (e.g. gemini-3.8-flash <-> gemini-3.5-flash-lite). Optional override:
+    // GEMINI_FALLBACK_MODELS="modelA,modelB" (comma separated).
+    const getFallbackPool = () => {
+        const fromEnv = (process.env.GEMINI_FALLBACK_MODELS || '').split(',').map(x => x.trim()).filter(Boolean);
+        return fromEnv.length ? fromEnv : [MODEL_NAME, CHAT_MODEL, EXTRACT_MODEL];
+    };
     const RETRY_STATUS = [408, 429, 500, 502, 503, 504];
     const geminiFetch = async (url, options) => {
         const m = url.match(/models\/([^:]+):/);
         const primary = m ? m[1] : null;
-        const models = primary ? [primary, ...FALLBACK_MODELS.filter(x => x !== primary)] : [null];
+        const models = primary ? [primary, ...getFallbackPool().filter((x, i, arr) => x && x !== primary && arr.indexOf(x) === i)] : [null];
         let lastResp = null, lastErr = null;
         for (let mi = 0; mi < models.length; mi++) {
             const u = primary ? url.replace(`models/${primary}:`, `models/${models[mi]}:`) : url;

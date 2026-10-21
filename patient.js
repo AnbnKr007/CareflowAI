@@ -269,12 +269,46 @@ clearImageBtn.addEventListener('click', () => {
     imagePreviewContainer.style.display = 'none';
 });
 
+// ---- Vercel rejects request bodies over ~4.5 MB (HTTP 413). Photos of reports are the usual cause, so if the
+// intake payload is too big, only the copy sent to the AI is shrunk step by step. The original photo shown
+// to the doctor is stored unchanged.
+const MAX_AI_PAYLOAD_CHARS = 3900000;
+
+function shrinkJpegBase64(b64, maxDim, quality) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', quality).split(',')[1]);
+        };
+        img.onerror = () => resolve(b64);
+        img.src = 'data:image/jpeg;base64,' + b64;
+    });
+}
+
+async function fitPayloadToLimit(payload) {
+    if (!payload.imageBase64 || JSON.stringify(payload).length <= MAX_AI_PAYLOAD_CHARS) return payload;
+    const steps = [[1024, 0.7], [800, 0.6], [640, 0.5], [480, 0.4]];
+    let out = payload;
+    for (const [dim, q] of steps) {
+        out = { ...payload, imageBase64: await shrinkJpegBase64(payload.imageBase64, dim, q) };
+        if (JSON.stringify(out).length <= MAX_AI_PAYLOAD_CHARS) break;
+    }
+    return out;
+}
+
 // Calls /api/gemini and keeps retrying transient failures (network drop, 429, 5xx, timeouts)
 // with back-off, so the patient normally never sees an "AI failed" message.
 async function callIntakeWithRetry(payload, onAttempt) {
     const MAX_TRIES = 6;
     const delays = [0, 1500, 3000, 5000, 8000, 12000];
     let lastErr = null;
+    let shrunkAfter413 = false;
+    payload = await fitPayloadToLimit(payload);
     for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
         if (delays[attempt - 1]) await new Promise(r => setTimeout(r, delays[attempt - 1]));
         if (onAttempt) onAttempt(attempt, MAX_TRIES);
@@ -293,7 +327,13 @@ async function callIntakeWithRetry(payload, onAttempt) {
             try { const j = await resp.json(); detail = j.details || j.error || ''; } catch (_) {}
             lastErr = new Error(`API status ${resp.status}${detail ? ': ' + String(detail).slice(0, 300) : ''}`);
             console.warn(`Intake attempt ${attempt} failed:`, lastErr.message);
-            // 400/401/403/404/413 will not succeed on retry
+            // Too large (413): shrink the photo to the smallest size once and retry immediately
+            if (resp.status === 413 && payload.imageBase64 && !shrunkAfter413) {
+                shrunkAfter413 = true;
+                payload = { ...payload, imageBase64: await shrinkJpegBase64(payload.imageBase64, 480, 0.4) };
+                continue;
+            }
+            // 400/401/403/404/413 will not succeed on a plain retry
             if ([400, 401, 403, 404, 413].includes(resp.status)) break;
         } catch (e) {
             clearTimeout(timer);

@@ -27,7 +27,16 @@ CareFlow AI is a multilingual, multimodal clinical triage web application design
 2. Import the repository into **Vercel**.
 3. In Vercel Project Settings → **Environment Variables**, add:
    - `GEMINI_API_KEY` = `your_google_gemini_api_key`
+   - (optional) `GEMINI_MODEL`, `GEMINI_EXTRACT_MODEL`, `GEMINI_CHAT_MODEL`, `GEMINI_FALLBACK_MODELS` (see *AI Models & Reliability*)
 4. Deploy!
+
+## AI Models & Reliability
+- **`gemini-3.8-flash`** (env `GEMINI_MODEL`, optional `GEMINI_EXTRACT_MODEL`): OCR, voice transcription / translation (stage 1) and the structured ESI assessment (stage 2).
+- **`gemini-3.5-flash-lite`** (env `GEMINI_CHAT_MODEL`): chat re-triage, suggested follow-up questions and the one-click translations.
+- **Automatic retries:** every Gemini call is retried on temporary errors (429 / 5xx / network drops) with back-off. If a model keeps failing or is not found, the server falls back to the other configured model(s) (override with `GEMINI_FALLBACK_MODELS="modelA,modelB"`). The browser also retries intake up to 6 times (chat and translate buttons 3 times), showing "AI is analysing your case... (try n/6)" instead of an error.
+- **Large photos (HTTP 413):** Vercel rejects request bodies over about 4.5 MB. Voice notes are recorded at 24 kbps, report photos are compressed to 1280 px, and if the combined request is still too big, only the copy sent to the AI is shrunk step by step (the original photo shown to the doctor is stored unchanged).
+- **Only if every retry fails:** the patient still sees a normal "Case Submitted" message, while the doctor card shows an "AI UNAVAILABLE" warning. In that case the offline ESI safety net decides (ESI 1-3 from keywords) and any case with an un-analysed voice note or photo is held at ESI 3 or higher.
+- **Function time limit:** `api/gemini.js` sets `maxDuration = 60` seconds.
 
 ## Assumptions & Limitations
 - **Decision support only.** CareFlow AI never diagnoses; a qualified clinician makes every final decision.
