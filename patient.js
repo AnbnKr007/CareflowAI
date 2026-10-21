@@ -242,16 +242,15 @@ clearImageBtn.addEventListener('click', () => {
 
 function buildClientFallbackTriage(payload) {
     const raw = `${payload.symptomsText || ''} ${payload.symptomOnset || ''}`.toLowerCase();
-    const isCritical = /chest pain|saans|breathless|unconscious|stroke|bleeding|seizure|heart attack|severe|chक्कर|सीने में दर्द/.test(raw);
-    const isUrgent = /fever|bukhar|बुखार|vomiting|fracture|infection|pain|दर्द|dizziness|102|103/.test(raw);
-
-    let priority = 'ROUTINE';
+    // ESI v4 offline fallback (AI unreachable): the multilingual safety net decides ESI 1-3,
+    // everything else is held at ESI 4 for clinician review. See esi-engine.js.
+    const esiResult = CareflowESI.fallbackTriage({ ageYears: payload.patientAge, text: raw });
+    const priority = esiResult.tier;
+    const isCritical = priority === 'CRITICAL';
     let dept = 'General Medicine';
     if (isCritical) {
-        priority = 'CRITICAL';
-        dept = /chest|heart|सीने/.test(raw) ? 'Cardiology' : (/saans|breath|lung/.test(raw) ? 'Pulmonology' : 'Emergency & Trauma');
-    } else if (isUrgent) {
-        priority = 'URGENT';
+        dept = /chest|heart|सीने|seene|sine|dil/.test(raw) ? 'Cardiology' : (/saans|breath|lung|सांस|साँस/.test(raw) ? 'Pulmonology' : 'Emergency & Trauma');
+    } else if (priority === 'URGENT') {
         if (/bone|joint|fracture|knee/.test(raw)) dept = 'Orthopedics';
         else if (/child|baby/.test(raw)) dept = 'Pediatrics';
         else if (/skin|rash/.test(raw)) dept = 'Dermatology';
@@ -269,11 +268,13 @@ function buildClientFallbackTriage(payload) {
 
     return {
         priority,
+        esiLevel: esiResult.level,
+        esi: esiResult,
         suggestedDepartment: dept,
         clinicalSummary: `Patient (${payload.patientName}, ${payload.patientAge}y/${payload.patientGender}) presented with: ${payload.symptomsText || 'multimodal audio/image submission'}. Onset/Progression: ${payload.symptomOnset || 'Not specified'}.`,
         symptomTimeline: payload.symptomOnset || 'Onset timeline not explicitly stated by patient.',
         standardizedSymptoms: payload.symptomsText ? [payload.symptomsText] : ['Multimodal input submitted (see attached voice/report)'],
-        warningSigns: isCritical ? ['Potential high-acuity cardiorespiratory or systemic warning sign detected'] : [],
+        warningSigns: isCritical ? [`ESI safety net: ${esiResult.safetyNet.reasons.join('; ')}`] : [],
         extractedVitals: { temperature: null, heart_rate: null, blood_pressure: null, spo2: null },
         sourceLinks: sources,
         missingInformation: missing,
@@ -395,8 +396,10 @@ patientForm.addEventListener('submit', async (e) => {
             triagedResult.uncertaintyNotes = [`AI UNAVAILABLE (${apiErr.message}) - rule-based triage only; image/audio NOT analysed. Review attachments manually.`, ...(triagedResult.uncertaintyNotes || [])];
         }
 
-        const priorityRankMap = { CRITICAL: 300, URGENT: 200, ROUTINE: 100 };
-        const initialScore = priorityRankMap[triagedResult.priority] || 100;
+        // Normalise: every case carries esiLevel (1-5) + tier (CRITICAL/URGENT/ROUTINE)
+        triagedResult.esiLevel = CareflowESI.levelOfCase(triagedResult);
+        triagedResult.priority = CareflowESI.tierForLevel(triagedResult.esiLevel);
+        const initialScore = CareflowESI.scoreForLevel(triagedResult.esiLevel);
         const initialBubbles = Array.isArray(triagedResult.followUpQuestions) && triagedResult.followUpQuestions.length
             ? triagedResult.followUpQuestions.slice(0, 3)
             : [
@@ -453,7 +456,7 @@ patientForm.addEventListener('submit', async (e) => {
                 {
                     timestamp: nowIso,
                     actor: 'CareFlow AI Triage Engine',
-                    action: `Initial triage categorized as ${triagedResult.priority || 'ROUTINE'} → Routed to ${triagedResult.suggestedDepartment || 'General Medicine'}.`
+                    action: `Initial ESI triage: ${CareflowESI.levelDisplay(triagedResult.esiLevel)} (${triagedResult.priority}) via decision point ${(triagedResult.esi && triagedResult.esi.decisionPoint) || 'n/a'}. ${((triagedResult.esi && triagedResult.esi.rationale) || []).join(' | ')} → Routed to ${triagedResult.suggestedDepartment || 'General Medicine'}.`
                 },
                 ...(triagedResult.translationUncertain ? [{
                     timestamp: nowIso,
@@ -870,6 +873,8 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
                         patientName: caseData.patientName,
                         patientAge: caseData.patientAge,
                         currentPriority: caseData.triage?.priority || 'ROUTINE',
+                        currentEsiLevel: CareflowESI.levelOfCase(caseData.triage),
+                        esiAssessment: caseData.triage?.esiAssessment || null,
                         suggestedDepartment: caseData.triage?.suggestedDepartment || 'General Medicine',
                         clinicalSummary: caseData.triage?.clinicalSummary || caseData.symptomsText,
                         standardizedSymptoms: caseData.triage?.standardizedSymptoms || [],
@@ -888,23 +893,13 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
         }
 
         if (!chatAiResult) {
-            const lower = text.toLowerCase();
-            let newPrio = caseData.triage?.priority || 'ROUTINE';
-            let reason = 'Patient provided follow-up update.';
-            if (/chest pain|breathless|saans|fainting|severe|blood|unbearable|badh gaya|worse/.test(lower)) {
-                newPrio = 'CRITICAL';
-                reason = 'Patient reported worsening or high-risk symptoms in chat.';
-            } else if (/fever|bukhar|pain|vomit|not better|still/.test(lower) && newPrio === 'ROUTINE') {
-                newPrio = 'URGENT';
-                reason = 'Patient reported persistent/escalating moderate symptoms.';
-            } else if (/better|recovered|fine now|theek|no pain|normal/.test(lower) && newPrio !== 'ROUTINE') {
-                newPrio = 'ROUTINE';
-                reason = 'Patient reported symptom improvement in chat.';
-            }
+            // AI unreachable: ESI safety net on the new message can only RAISE the level.
+            const fb = CareflowESI.chatFallback(CareflowESI.levelOfCase(caseData.triage), text, { ageYears: caseData.patientAge });
             chatAiResult = {
-                updatedPriority: newPrio,
-                priorityShiftReason: reason,
-                chatSummary: `Latest patient update: "${text}". (${reason})`,
+                updatedPriority: fb.tier,
+                updatedEsiLevel: fb.level,
+                priorityShiftReason: fb.reason,
+                chatSummary: `Latest patient update: "${text}". (${fb.reason})`,
                 newSymptomsExtracted: [],
                 followUpQuestions: [
                     'How severe is the discomfort right now on a scale of 1 to 10?',
@@ -914,15 +909,16 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             };
         }
 
-        const oldPriority = caseData.triage?.priority || 'ROUTINE';
-        let newPriority = chatAiResult.updatedPriority || oldPriority;
-        const prioW = { CRITICAL: 3, URGENT: 2, ROUTINE: 1 };
+        const oldLevel = CareflowESI.levelOfCase(caseData.triage);
+        const oldPriority = CareflowESI.tierForLevel(oldLevel);
+        let newLevel = CareflowESI.clampLevel(chatAiResult.updatedEsiLevel) || CareflowESI.levelForTier(chatAiResult.updatedPriority || oldPriority);
         let deescalationNote = '';
-        if ((prioW[newPriority] || 1) < (prioW[oldPriority] || 1)) {
-            deescalationNote = ` AI suggests lowering priority to ${newPriority} - awaiting doctor confirmation.`;
-            newPriority = oldPriority;
+        // The AI may raise acuity automatically, but lowering it (higher ESI number) needs doctor confirmation.
+        if (newLevel > oldLevel) {
+            deescalationNote = ` AI suggests lowering acuity to ${CareflowESI.levelDisplay(newLevel)} - awaiting doctor confirmation.`;
+            newLevel = oldLevel;
         }
-        const priorityRankMap = { CRITICAL: 300, URGENT: 200, ROUTINE: 100 };
+        const newPriority = CareflowESI.tierForLevel(newLevel);
 
         const newHistory = fuState.history.map(h => h.status === 'ASKED'
             ? { ...h, status: 'ANSWERED', answeredAt: nowIso, answer: text.slice(0, 200) }
@@ -943,8 +939,11 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
         const updatedTriage = {
             ...(caseData.triage || {}),
             priority: newPriority,
+            esiLevel: newLevel,
             followUpQuestions: newActive
         };
+        if (newLevel !== oldLevel && chatAiResult.esi) updatedTriage.esi = chatAiResult.esi;
+        if (chatAiResult.esiAssessment) updatedTriage.esiAssessment = chatAiResult.esiAssessment;
 
         if (Array.isArray(chatAiResult.newSymptomsExtracted) && chatAiResult.newSymptomsExtracted.length > 0) {
             updatedTriage.standardizedSymptoms = [
@@ -975,16 +974,16 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
             });
         }
 
-        if (newPriority !== oldPriority) {
+        if (newLevel !== oldLevel) {
             auditLog.push({
                 timestamp: nowIso,
                 actor: 'CareFlow AI Re-Triage',
-                action: `Priority automatically shifted from ${oldPriority} → ${newPriority} based on patient chat (${chatAiResult.priorityShiftReason || 'Clinical update'}).`
+                action: `ESI level automatically raised from ${CareflowESI.levelDisplay(oldLevel)} → ${CareflowESI.levelDisplay(newLevel)} (${newPriority}) based on patient chat (${chatAiResult.priorityShiftReason || 'Clinical update'}).`
             });
         }
 
         if (deescalationNote) auditLog.push({ timestamp: nowIso, actor: 'CareFlow AI Re-Triage', action: deescalationNote.trim() });
-        const newQueueScore = (priorityRankMap[newPriority] || 100) + (caseData.manualOrderOffset || 0);
+        const newQueueScore = CareflowESI.scoreForLevel(newLevel) + (caseData.manualOrderOffset || 0);
 
         await fbFetch(`${FIREBASE_URL}/clinics/${clinicCode}/cases/${caseId}.json`, {
             method: 'PATCH',

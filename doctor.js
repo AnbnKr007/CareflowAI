@@ -315,6 +315,10 @@ function sortCasesByPriority(cases) {
         const offsetB = typeof b.manualOrderOffset === 'number' ? b.manualOrderOffset : 0;
         if (offsetB !== offsetA) return offsetB - offsetA;
 
+        // Within the same tier, the lower ESI number (more acute) comes first: ESI 1 before ESI 2, ESI 4 before ESI 5
+        const lvlDiff = CareflowESI.levelOfCase(a.triage) - CareflowESI.levelOfCase(b.triage);
+        if (lvlDiff !== 0) return lvlDiff;
+
         return new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
     });
 }
@@ -691,6 +695,21 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
         </div>
     `).join('');
 
+    const esiLevelNow = CareflowESI.levelOfCase(t);
+    const esiInfo = t.esi || null;
+    const esiBasisHtml = `
+        <details class="esi-basis">
+            <summary>🧭 ESI triage basis &mdash; <strong>${escapeHtml(CareflowESI.levelDisplay(esiLevelNow))}</strong> → ${escapeHtml(priority)}${t.esiOverride ? ' (clinician override)' : ''}</summary>
+            ${esiInfo ? `
+                <div class="esi-basis-body">
+                    <div><strong>Standard:</strong> ${escapeHtml(esiInfo.standard || 'ESI v4')} &bull; <strong>Decision point:</strong> ${escapeHtml(String(esiInfo.decisionPoint || 'n/a'))}</div>
+                    <ul>${(esiInfo.rationale || []).map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
+                    ${(esiInfo.resources && esiInfo.resources.categories && esiInfo.resources.categories.length) ? `<div><strong>Expected resources (${escapeHtml(String(esiInfo.resources.count))}):</strong> ${esiInfo.resources.categories.map(r => escapeHtml(r.label + (r.reason ? ' — ' + r.reason : ''))).join('; ')}</div>` : ''}
+                    ${(esiInfo.dangerZone && esiInfo.dangerZone.exceeded) ? `<div><strong>Danger-zone vitals:</strong> ${esiInfo.dangerZone.details.map(escapeHtml).join('; ')}</div>` : ''}
+                    ${esiInfo.fallback ? '<div><em>AI was unavailable — rule-based ESI fallback; please verify manually.</em></div>' : ''}
+                </div>` : `<div class="esi-basis-body"><em>Legacy case (triaged before ESI was introduced) — tier shown only.</em></div>`}
+        </details>`;
+
     const vitals = t.extractedVitals || {};
     const vitalsHtml = `
         <div class="vitals-strip">
@@ -863,11 +882,13 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                     </div>
 
                     <div class="header-badges">
-                        <span class="priority-badge">${escapeHtml(priority)}</span>
-                        <select class="priority-select-inline" onchange="handleDirectPrioritySelect('${caseData.id}', this.value)" title="Change Priority Tier">
-                            <option value="CRITICAL" ${priority === 'CRITICAL' ? 'selected' : ''}>🔴 CRITICAL</option>
-                            <option value="URGENT" ${priority === 'URGENT' ? 'selected' : ''}>🟠 URGENT</option>
-                            <option value="ROUTINE" ${priority === 'ROUTINE' ? 'selected' : ''}>🟢 ROUTINE</option>
+                        <span class="priority-badge">${escapeHtml(priority)} · ESI ${esiLevelNow}</span>
+                        <select class="priority-select-inline" onchange="handleDirectPrioritySelect('${caseData.id}', this.value)" title="Change ESI level (1-2 Critical, 3 Urgent, 4-5 Routine)">
+                            <option value="1" ${esiLevelNow === 1 ? 'selected' : ''}>🔴 ESI 1 · Resuscitation</option>
+                            <option value="2" ${esiLevelNow === 2 ? 'selected' : ''}>🔴 ESI 2 · Emergent</option>
+                            <option value="3" ${esiLevelNow === 3 ? 'selected' : ''}>🟠 ESI 3 · Urgent</option>
+                            <option value="4" ${esiLevelNow === 4 ? 'selected' : ''}>🟢 ESI 4 · Less urgent</option>
+                            <option value="5" ${esiLevelNow === 5 ? 'selected' : ''}>🟢 ESI 5 · Non-urgent</option>
                         </select>
                     </div>
                 </div>
@@ -878,7 +899,7 @@ function renderDoctorCaseCard(caseData, index, totalCount) {
                     </div>
                 ` : ''}
 
-                ${translationBannerHtml}${warningSignsHtml}${vitalsHtml}
+                ${translationBannerHtml}${warningSignsHtml}${esiBasisHtml}${vitalsHtml}
 
                 <div class="card-body-grid">
                     <div>
@@ -1045,12 +1066,13 @@ async function swapOrderWithinTier(movingCase, neighborCase, direction, forcedNe
     const newNeighborOffset = direction === 'up' ? currentNeighborOffset - 1 : currentNeighborOffset + 1;
 
     const updatedPriority = forcedNewPriority || movingCase.triage?.priority || 'ROUTINE';
+    const updatedEsiLevel = forcedNewPriority ? CareflowESI.levelOfCase(neighborCase.triage) : CareflowESI.levelOfCase(movingCase.triage);
     const nowIso = new Date().toISOString();
     const docActor = getFormattedDocName();
 
     const auditLog = Array.isArray(movingCase.auditLog) ? [...movingCase.auditLog] : [];
     const actionDesc = forcedNewPriority
-        ? `Moved case ${direction} and changed priority from ${movingCase.triage?.priority} → ${forcedNewPriority}`
+        ? `Moved case ${direction} and changed priority from ${CareflowESI.levelDisplay(CareflowESI.levelOfCase(movingCase.triage))} (${movingCase.triage?.priority}) → ${CareflowESI.levelDisplay(updatedEsiLevel)} (${forcedNewPriority})`
         : `Reordered case ${direction} in clinic queue`;
 
     auditLog.push({
@@ -1061,7 +1083,9 @@ async function swapOrderWithinTier(movingCase, neighborCase, direction, forcedNe
 
     const updatedTriage = {
         ...(movingCase.triage || {}),
-        priority: updatedPriority
+        priority: updatedPriority,
+        esiLevel: updatedEsiLevel,
+        ...(forcedNewPriority ? { esiOverride: { by: docActor, at: nowIso, from: CareflowESI.levelOfCase(movingCase.triage), to: updatedEsiLevel } } : {})
     };
 
     const actionMeta = buildDoctorActionEntry(movingCase, 'Reordered / Reprioritized Queue', actionDesc);
@@ -1091,8 +1115,10 @@ async function swapOrderWithinTier(movingCase, neighborCase, direction, forcedNe
 }
 
 function openPriorityDowngradeModal(movingCase, neighborCase, targetPriority, isUpgrade = false) {
-    const currentPrio = movingCase.triage?.priority || 'ROUTINE';
-    pendingPriorityConfirmation = { movingCase, neighborCase, targetPriority, direction: isUpgrade ? 'up' : 'down' };
+    const currentPrio = `${movingCase.triage?.priority || 'ROUTINE'} · ESI ${CareflowESI.levelOfCase(movingCase.triage)}`;
+    targetPriority = `${targetPriority} · ESI ${CareflowESI.levelOfCase(neighborCase.triage)}`;
+    const targetTierOnly = String(targetPriority).split(' ')[0];
+    pendingPriorityConfirmation = { movingCase, neighborCase, targetPriority: targetTierOnly, direction: isUpgrade ? 'up' : 'down' };
 
     priorityConfirmBody.innerHTML = `
         <p style="margin-top:0;">
@@ -1120,14 +1146,18 @@ cancelPriorityChangeBtn.addEventListener('click', () => {
     pendingPriorityConfirmation = null;
 });
 
-window.handleDirectPrioritySelect = async function(caseId, newPriority) {
+window.handleDirectPrioritySelect = async function(caseId, newLevelRaw) {
     const caseData = currentCasesList.find(c => c.id === caseId);
     if (!caseData) return;
-    const oldPriority = caseData.triage?.priority || 'ROUTINE';
-    if (oldPriority === newPriority) return;
+    const newLevel = CareflowESI.clampLevel(newLevelRaw);
+    if (!newLevel) return;
+    const oldLevel = CareflowESI.levelOfCase(caseData.triage);
+    if (oldLevel === newLevel) return;
+    const oldPriority = CareflowESI.tierForLevel(oldLevel);
+    const newPriority = CareflowESI.tierForLevel(newLevel);
 
-    if (oldPriority === 'CRITICAL' && (newPriority === 'URGENT' || newPriority === 'ROUTINE')) {
-        const ok = confirm(`CONFIRM DOWNGRADE:\nCase #${caseId} (${caseData.patientName}) is currently marked CRITICAL.\nAre you sure you want to downgrade its priority rating to ${newPriority}?`);
+    if (oldPriority === 'CRITICAL' && newPriority !== 'CRITICAL') {
+        const ok = confirm(`CONFIRM DOWNGRADE:\nCase #${caseId} (${caseData.patientName}) is currently ${CareflowESI.levelDisplay(oldLevel)} (CRITICAL).\nAre you sure you want to downgrade it to ${CareflowESI.levelDisplay(newLevel)} (${newPriority})?`);
         if (!ok) {
             fetchCloudQueue();
             return;
@@ -1140,21 +1170,21 @@ window.handleDirectPrioritySelect = async function(caseId, newPriority) {
     auditLog.push({
         timestamp: nowIso,
         actor: docActor,
-        action: `Changed case priority from ${oldPriority} → ${newPriority}.`
+        action: `Changed ESI level from ${CareflowESI.levelDisplay(oldLevel)} (${oldPriority}) → ${CareflowESI.levelDisplay(newLevel)} (${newPriority}).`
     });
 
-    const actionMeta = buildDoctorActionEntry(caseData, `Changed Priority (${oldPriority} → ${newPriority})`, `Priority set to ${newPriority}`);
+    const actionMeta = buildDoctorActionEntry(caseData, `Changed ESI Level (ESI ${oldLevel} → ESI ${newLevel})`, `ESI level set to ${newLevel} (${newPriority})`);
 
     await fbFetch(`${FIREBASE_URL}/clinics/${currentClinic}/cases/${caseId}.json`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            triage: { ...(caseData.triage || {}), priority: newPriority },
+            triage: { ...(caseData.triage || {}), priority: newPriority, esiLevel: newLevel, esiOverride: { by: docActor, at: nowIso, from: oldLevel, to: newLevel } },
             ...actionMeta,
             auditLog
         })
     });
-    await recordDoctorActivityInClinic(`Changed priority of Case #${caseId} to ${newPriority}`);
+    await recordDoctorActivityInClinic(`Changed ESI level of Case #${caseId} to ESI ${newLevel} (${newPriority})`);
     await fetchCloudQueue();
 };
 
@@ -1433,7 +1463,7 @@ confirmParamedicDispatchBtn.addEventListener('click', async () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             status: 'EMERGENCY_DISPATCHED',
-            triage: { ...(caseData.triage || {}), priority: 'CRITICAL' },
+            triage: { ...(caseData.triage || {}), priority: 'CRITICAL', esiLevel: Math.min(CareflowESI.levelOfCase(caseData.triage), 2) },
             paramedicDispatch,
             ...actionMeta,
             messages,

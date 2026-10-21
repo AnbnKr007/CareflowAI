@@ -4,7 +4,8 @@ CareFlow AI is a multilingual, multimodal clinical triage web application design
 
 ## Key Features
 - **Multimodal & Multilingual Intake**: Accepts English, Hindi, Hinglish, and regional Indian languages via typed descriptions, WebRTC voice recordings, and uploaded medical reports (OCR).
-- **Safety-First Non-Diagnostic AI Triage**: Uses a two-stage `gemini-2.5-flash` pipeline (`/api/gemini`) with an automatic client-side safety fallback. Identifies red-flag warning signs, missing clinical context, conflicting data across sources, and transcription/OCR uncertainty without diagnosing diseases.
+- **ESI v4 Triage (Emergency Severity Index)**: Triage levels follow the AHRQ ESI v4 algorithm, applied deterministically by `esi-engine.js` (shared by the server and the browser). The AI never picks the level: Stage 1 reads typed text, voice and report images in any language (English, Hindi, Hinglish, regional, badly written or spoken), and Stage 2 answers the structured ESI questions (A: life-saving intervention, B: high-risk / confused / severe pain, C: expected resources, D: danger-zone vitals). The engine then maps **ESI 1-2 → CRITICAL, ESI 3 → URGENT, ESI 4-5 → ROUTINE**. Each case stores `triage.esiLevel`, `triage.priority` (tier) and `triage.esi` (decision point + rationale) for audit. Same logic is used at intake and when the patient replies in the doctor chat (re-triage).
+- **Safety-First Non-Diagnostic AI Triage**: Uses a two-stage Gemini pipeline (`/api/gemini`) with an automatic client-side safety fallback. Identifies red-flag warning signs, missing clinical context, conflicting data across sources, and transcription/OCR uncertainty without diagnosing diseases.
 - **Source Attribution Links**: Every extracted symptom, vital sign, or lab finding is linked back to its source (Patient Text, Voice Recording, or Medical Report OCR).
 - **Browser Cookie Sessions & Personalized Dashboards**:
   - **Patients**: Greeted by name, with all submitted cases automatically synced and grouped by **Clinic Code**.
@@ -31,8 +32,9 @@ CareFlow AI is a multilingual, multimodal clinical triage web application design
 ## Assumptions & Limitations
 - **Decision support only.** CareFlow AI never diagnoses; a qualified clinician makes every final decision.
 - **Demo data.** Use synthetic or anonymised data only. This prototype is not certified for real patient records.
-- **Red-flag keywords are a starter set** and must be reviewed by a clinician before real use. Matching is deliberately not negation-aware ("no chest pain" still flags), so it errs toward over-triage; doctors can override.
-- **The AI can raise priority but never lower it** below what the safety rules set; lowering via patient chat needs doctor confirmation.
+- **Red-flag keywords are a starter set** (English, Hindi, Hinglish) and must be reviewed by a clinician before real use. They act as an ESI safety net that can only RAISE the ESI level. Matching is deliberately not negation-aware ("no chest pain" still flags), so it errs toward over-triage; doctors can override.
+- **ESI level changes**: the AI can raise the ESI level automatically; lowering it (via patient chat) needs doctor confirmation. Doctors can set any ESI level 1-5 from the card; lowering a CRITICAL case asks for confirmation.
+- **ESI v4 is a nurse-assessed tool.** CareFlow applies it to patient-reported information only (no measured vitals unless the patient/report states them). Danger-zone vitals automatically up-triage ESI 3 → ESI 2 (the handbook says "consider"); the clinician confirms. Read the ESI copyright notice in the AHRQ handbook before any real deployment.
 - **Language accuracy** for Hindi, Hinglish and regional languages depends on the Gemini models and has not been benchmarked; uncertain transcription/translation is flagged for the doctor.
 - **Emergency numbers** shown on the intake form are for India (112 national, 108 ambulance).
 - **Voice notes** auto-stop at 120 seconds.

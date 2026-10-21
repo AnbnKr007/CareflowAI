@@ -438,6 +438,8 @@ window.syncClinicDashboard = async function(silent = false) {
             const pA = PRIORITY_WEIGHT[a.triage?.priority || 'ROUTINE'] || 1;
             const pB = PRIORITY_WEIGHT[b.triage?.priority || 'ROUTINE'] || 1;
             if (pB !== pA) return pB - pA;
+            const lvlDiff = CareflowESI.levelOfCase(a.triage) - CareflowESI.levelOfCase(b.triage);
+            if (lvlDiff !== 0) return lvlDiff;
             return new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
         });
 
@@ -707,7 +709,7 @@ function renderReadOnlyCaseCard(caseData, focusDoctorId = null) {
                 </div>
                 <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
                     ${summarizeDoctorOutcomeBadge(caseData)}
-                    <span class="priority-badge">${escapeHtml(priority)}</span>
+                    <span class="priority-badge">${escapeHtml(priority)} · ESI ${CareflowESI.levelOfCase(t)}</span>
                 </div>
             </div>
 
