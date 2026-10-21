@@ -99,7 +99,7 @@ export default async function handler(req, res) {
 
             let OLLAMA_URL = String(process.env.OLLAMA_URL || '').trim().replace(/\/+$/, '');
             if (!OLLAMA_URL) {
-                return res.status(500).json({ error: 'Translation service not configured.', details: 'OLLAMA_URL environment variable is not set on the server.' });
+                return res.status(500).json({ error: 'Translation service not configured.', details: 'OLLAMA_URL environment variable is not set on the server. [debug] vercelEnv=' + (process.env.VERCEL_ENV || 'n/a') + ', host=' + ((req.headers && req.headers.host) || 'n/a') + ', deployment=' + (process.env.VERCEL_URL || 'n/a') + ', ollama-like keys seen=' + (Object.keys(process.env).filter(k => /ollama|olama|ngrok/i.test(k)).map(k => JSON.stringify(k)).join(', ') || 'none') });
             }
             if (!/^https?:\/\//i.test(OLLAMA_URL)) OLLAMA_URL = 'https://' + OLLAMA_URL;
             const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen3.5:4b';
