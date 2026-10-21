@@ -437,6 +437,10 @@
             level = 4; dp = 'C(est.)';
             why = 'AI unavailable: resources could not be predicted — held at ESI 4 pending clinician review';
         }
+        if (ctx.hasMedia && level > 3) {
+            level = 3; dp = 'media-unanalysed';
+            why = 'AI unavailable and a voice note / report image was attached but NOT analysed — held at ESI 3 until a clinician reviews it';
+        }
         return {
             standard: STANDARD,
             level: level,

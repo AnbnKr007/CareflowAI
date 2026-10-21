@@ -37,6 +37,32 @@ function getCookie(name) {
     } catch (e) { return null; }
 }
 
+// Calls /api/gemini and retries transient failures (network drop, timeout, 429, 5xx) with back-off.
+async function fetchGeminiRetry(body, maxTries = 3) {
+    let lastResp = null, lastErr = null;
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+        if (attempt > 1) await new Promise(r => setTimeout(r, 1200 * (attempt - 1)));
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 60000);
+        try {
+            const resp = await fetch('/api/gemini', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: ctrl.signal
+            });
+            clearTimeout(timer);
+            if (resp.ok || ![408, 429, 500, 502, 503, 504].includes(resp.status)) return resp;
+            lastResp = resp;
+        } catch (e) {
+            clearTimeout(timer);
+            lastErr = e;
+        }
+    }
+    if (lastResp) return lastResp;
+    throw lastErr || new Error('AI request failed');
+}
+
 function escapeHtml(str) {
     if (!str) return '';
     return String(str)
@@ -422,16 +448,12 @@ window.translatePatientMsgToEnglish = async function(caseId, msgIndex) {
     }
 
     try {
-        const res = await fetch('/api/gemini', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+        const res = await fetchGeminiRetry({
                 mode: 'translate',
                 text: msg.text,
                 targetLanguage: 'English',
                 viewerRole: 'doctor'
-            })
-        });
+            });
 
         if (!res.ok) {
             let errDetail = '';

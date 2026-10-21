@@ -132,6 +132,32 @@ function fmtDateTime(iso) {
     return d.toLocaleString([], { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// Calls /api/gemini and retries transient failures (network drop, timeout, 429, 5xx) with back-off.
+async function fetchGeminiRetry(body, maxTries = 3) {
+    let lastResp = null, lastErr = null;
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+        if (attempt > 1) await new Promise(r => setTimeout(r, 1200 * (attempt - 1)));
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 60000);
+        try {
+            const resp = await fetch('/api/gemini', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: ctrl.signal
+            });
+            clearTimeout(timer);
+            if (resp.ok || ![408, 429, 500, 502, 503, 504].includes(resp.status)) return resp;
+            lastResp = resp;
+        } catch (e) {
+            clearTimeout(timer);
+            lastErr = e;
+        }
+    }
+    if (lastResp) return lastResp;
+    throw lastErr || new Error('AI request failed');
+}
+
 function escapeHtml(str) {
     if (!str) return '';
     return String(str)
@@ -147,7 +173,10 @@ recordBtn.addEventListener('click', async () => {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const preferredTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
         const chosenType = preferredTypes.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
-        mediaRecorder = chosenType ? new MediaRecorder(stream, { mimeType: chosenType }) : new MediaRecorder(stream);
+        // 24 kbps is plenty for speech and keeps a 2-minute note far below the 4.5 MB serverless request limit
+        const recOpts = { audioBitsPerSecond: 24000 };
+        if (chosenType) recOpts.mimeType = chosenType;
+        mediaRecorder = new MediaRecorder(stream, recOpts);
         audioChunks = [];
 
         mediaRecorder.ondataavailable = (event) => {
@@ -240,11 +269,46 @@ clearImageBtn.addEventListener('click', () => {
     imagePreviewContainer.style.display = 'none';
 });
 
+// Calls /api/gemini and keeps retrying transient failures (network drop, 429, 5xx, timeouts)
+// with back-off, so the patient normally never sees an "AI failed" message.
+async function callIntakeWithRetry(payload, onAttempt) {
+    const MAX_TRIES = 6;
+    const delays = [0, 1500, 3000, 5000, 8000, 12000];
+    let lastErr = null;
+    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+        if (delays[attempt - 1]) await new Promise(r => setTimeout(r, delays[attempt - 1]));
+        if (onAttempt) onAttempt(attempt, MAX_TRIES);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 75000);
+        try {
+            const resp = await fetch('/api/gemini', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: ctrl.signal
+            });
+            clearTimeout(timer);
+            if (resp.ok) return await resp.json();
+            let detail = '';
+            try { const j = await resp.json(); detail = j.details || j.error || ''; } catch (_) {}
+            lastErr = new Error(`API status ${resp.status}${detail ? ': ' + String(detail).slice(0, 300) : ''}`);
+            console.warn(`Intake attempt ${attempt} failed:`, lastErr.message);
+            // 400/401/403/404/413 will not succeed on retry
+            if ([400, 401, 403, 404, 413].includes(resp.status)) break;
+        } catch (e) {
+            clearTimeout(timer);
+            lastErr = e && e.name === 'AbortError' ? new Error('Request timed out') : e;
+            console.warn(`Intake attempt ${attempt} failed:`, lastErr && lastErr.message);
+        }
+    }
+    throw lastErr || new Error('AI request failed');
+}
+
 function buildClientFallbackTriage(payload) {
     const raw = `${payload.symptomsText || ''} ${payload.symptomOnset || ''}`.toLowerCase();
     // ESI v4 offline fallback (AI unreachable): the multilingual safety net decides ESI 1-3,
     // everything else is held at ESI 4 for clinician review. See esi-engine.js.
-    const esiResult = CareflowESI.fallbackTriage({ ageYears: payload.patientAge, text: raw });
+    const esiResult = CareflowESI.fallbackTriage({ ageYears: payload.patientAge, text: raw, hasMedia: !!(payload.audioBase64 || payload.imageBase64) });
     const priority = esiResult.tier;
     const isCritical = priority === 'CRITICAL';
     let dept = 'General Medicine';
@@ -378,22 +442,17 @@ patientForm.addEventListener('submit', async (e) => {
     try {
         let triagedResult;
         try {
-            const aiResponse = await fetch('/api/gemini', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+            triagedResult = await callIntakeWithRetry(payload, (n, max) => {
+                submitBtn.textContent = n === 1
+                    ? "⏳ Running Multimodal AI Triage..."
+                    : `⏳ AI is analysing your case... (try ${n}/${max})`;
             });
-            if (!aiResponse.ok) {
-                let detail = '';
-                try { const j = await aiResponse.json(); detail = j.details || j.error || ''; } catch (_) {}
-                throw new Error(`API status ${aiResponse.status}${detail ? ': ' + String(detail).slice(0, 300) : ''}`);
-            }
-            triagedResult = await aiResponse.json();
         } catch (apiErr) {
-            console.warn("Falling back to local safety triage rules:", apiErr.message);
+            // Only reached after every retry failed. The patient is not alarmed; the doctor still sees the warning.
+            console.warn("AI unavailable after retries, using local ESI safety rules:", apiErr.message);
             triagedResult = buildClientFallbackTriage(payload);
             triagedResult.aiFallback = true;
-            triagedResult.uncertaintyNotes = [`AI UNAVAILABLE (${apiErr.message}) - rule-based triage only; image/audio NOT analysed. Review attachments manually.`, ...(triagedResult.uncertaintyNotes || [])];
+            triagedResult.uncertaintyNotes = [`AI UNAVAILABLE (${apiErr.message}) - rule-based ESI triage only; image/audio NOT analysed. Review attachments manually.`, ...(triagedResult.uncertaintyNotes || [])];
         }
 
         // Normalise: every case carries esiLevel (1-5) + tier (CRITICAL/URGENT/ROUTINE)
@@ -504,7 +563,7 @@ patientForm.addEventListener('submit', async (e) => {
         statusMessage.innerHTML = `
             <strong>✅ Case Submitted Successfully!</strong><br>
             Case ID: <span class="code-pill">${caseId}</span> | Clinic: <strong>${clinicCode}</strong><br>
-            ${triagedResult.aiFallback ? '<span style="color:#b45309;">⚠️ AI analysis failed (' + escapeHtml(triagedResult.uncertaintyNotes[0]) + ')</span><br>' : ''}Sent to the <strong>${escapeHtml(triagedResult.suggestedDepartment || 'General Medicine')}</strong> team for review by a qualified healthcare professional.<br><small>If your symptoms get worse, call <strong>112</strong> or go to the nearest hospital.</small>
+            Sent to the <strong>${escapeHtml(triagedResult.suggestedDepartment || 'General Medicine')}</strong> team for review by a qualified healthcare professional.<br><small>If your symptoms get worse, call <strong>112</strong> or go to the nearest hospital.</small>
         `;
         statusMessage.style.display = 'block';
 
@@ -552,16 +611,12 @@ window.translateIncomingMsgForPatient = async function(caseId, msgIndex) {
     }
 
     try {
-        const res = await fetch('/api/gemini', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+        const res = await fetchGeminiRetry({
                 mode: 'translate',
                 text: msg.text,
                 targetLanguage,
                 viewerRole: 'patient'
-            })
-        });
+            });
 
         if (!res.ok) {
             let errDetail = '';
@@ -864,10 +919,7 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
 
         let chatAiResult = null;
         try {
-            const aiRes = await fetch('/api/gemini', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            const aiRes = await fetchGeminiRetry({
                     mode: 'chat_update',
                     existingCase: {
                         patientName: caseData.patientName,
@@ -883,8 +935,7 @@ window.sendPatientChatMessage = async function(clinicCode, caseId) {
                     },
                     messages,
                     latestPatientMessage: text
-                })
-            });
+                });
             if (aiRes.ok) {
                 chatAiResult = await aiRes.json();
             }
