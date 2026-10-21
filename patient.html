@@ -61,7 +61,7 @@
                         </div>
                         <div class="form-group quarter">
                             <label for="patientAge">Age *</label>
-                            <input type="number" id="patientAge" placeholder="32" min="1" max="120" required>
+                            <input type="number" id="patientAge" placeholder="32" min="0" max="120" title="Age in years (enter 0 if under 1 year)" required>
                         </div>
                         <div class="form-group quarter">
                             <label for="patientGender">Gender *</label>
@@ -156,6 +156,7 @@
         </aside>
     </div>
 
+    <script src="esi-engine.js"></script>
     <script src="patient.js"></script>
 </body>
 </html>

@@ -1760,3 +1760,9 @@ body:not(.clinic-locked) #clinicAuthGate { display: none; }
     font-weight: 700;
     color: #0f172a;
 }
+
+/* ESI triage basis (doctor card) */
+.esi-basis { margin: 8px 0; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; padding: 6px 10px; font-size: 0.85rem; }
+.esi-basis summary { cursor: pointer; font-weight: 600; }
+.esi-basis-body { margin-top: 6px; line-height: 1.45; }
+.esi-basis-body ul { margin: 4px 0 6px 18px; padding: 0; }
