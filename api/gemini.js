@@ -97,7 +97,11 @@ export default async function handler(req, res) {
                 return res.status(400).json({ error: 'No message text provided for translation.' });
             }
 
-            const OLLAMA_URL = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+            let OLLAMA_URL = String(process.env.OLLAMA_URL || '').trim().replace(/\/+$/, '');
+            if (!OLLAMA_URL) {
+                return res.status(500).json({ error: 'Translation service not configured.', details: 'OLLAMA_URL environment variable is not set on the server.' });
+            }
+            if (!/^https?:\/\//i.test(OLLAMA_URL)) OLLAMA_URL = 'https://' + OLLAMA_URL;
             const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen3.5:4b';
 
             const translatePrompt = viewerRole === 'doctor'
