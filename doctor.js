@@ -431,9 +431,7 @@ function updateQueueStats(cases) {
 // ============================================================================
 // ONE-CLICK PATIENT MESSAGE TRANSLATION TO CLEAN ENGLISH (DOCTOR VIEW)
 // ============================================================================
-// Local Ollama configuration (runs qwen3.5:4b on RTX 4050 via http://127.0.0.1:11434)
-const OLLAMA_BASE_URL = "http://127.0.0.1:11434";
-const OLLAMA_TRANSLATE_MODEL = "qwen3.5:4b";
+// Translation is served by local Ollama (qwen3.5:4b) via the backend, reached through the ngrok URL in OLLAMA_URL.
 
 async function translateViaOllama({ text, targetLanguage = 'English', viewerRole = 'doctor' }) {
     const rawText = String(text || '').trim();
@@ -464,42 +462,7 @@ Return STRICT JSON matching this schema:
     "detectedLanguage": "Source language"
 }`;
 
-    // 1. Try local Ollama directly from the browser (works on the RTX 4050 laptop even when hosted on Vercel)
-    try {
-        const resp = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: OLLAMA_TRANSLATE_MODEL,
-                messages: [{ role: 'user', content: translatePrompt }],
-                stream: false,
-                think: false,
-                format: {
-                    type: 'object',
-                    properties: {
-                        translatedText: { type: 'string' },
-                        detectedLanguage: { type: 'string' }
-                    },
-                    required: ['translatedText', 'detectedLanguage']
-                },
-                options: { temperature: 0.1 }
-            })
-        });
-        if (resp.ok) {
-            const ollamaData = await resp.json();
-            let rawContent = (ollamaData && ollamaData.message && ollamaData.message.content) || ollamaData.response || '';
-            rawContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-            rawContent = rawContent.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
-            const parsed = JSON.parse(rawContent);
-            parsed.modelUsed = OLLAMA_TRANSLATE_MODEL;
-            parsed.targetLanguage = targetLanguage;
-            return parsed;
-        }
-    } catch (localErr) {
-        console.warn('Direct browser-to-Ollama call failed, trying backend /api/gemini route:', localErr.message);
-    }
-
-    // 2. Fallback to backend /api/gemini (which also calls Ollama via OLLAMA_URL)
+    // Translation always runs server-side: /api/gemini (mode: translate) -> OLLAMA_URL (ngrok tunnel to local Ollama)
     const res = await fetchGeminiRetry({
         mode: 'translate',
         text: rawText,
@@ -509,7 +472,7 @@ Return STRICT JSON matching this schema:
     if (!res.ok) {
         let errDetail = '';
         try { const j = await res.json(); errDetail = j.details || j.error || ''; } catch (_) {}
-        throw new Error(errDetail || `HTTP ${res.status} (Make sure Ollama is running with OLLAMA_ORIGINS="*")`);
+        throw new Error(errDetail || `HTTP ${res.status} (Is Ollama + ngrok running on the host laptop?)`);
     }
     return await res.json();
 }
