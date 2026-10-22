@@ -4,7 +4,7 @@
 CareFlow AI is a multilingual, multimodal triage web app for crowded clinics. It turns messy patient input (typed text, voice notes, report photos — in English, Hindi, Hinglish or regional Indian languages) into a ranked, source-linked case queue for the doctor. It **never diagnoses**; a qualified clinician makes every final decision.
 
 - **Live demo:** https://careflowai-mu.vercel.app
-- **Team Fable-6:** Kumar Anirban (Team Leader), Ayush Kumar, Abhinay Kumar
+- **Team Fable-6:** Kumar Anirban, Ayush Kumar, Abhinay Kumar
 - **Built for:** Confluentia 2026 Tredence Hackathon — Problem Statement 4 (*CareFlow AI: Human-in-the-Loop Healthcare Triage Assistant*)
 
 ---
