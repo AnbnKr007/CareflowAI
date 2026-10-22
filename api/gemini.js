@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     }
 
     const API_KEY = process.env.GEMINI_API_KEY;
-    if (!API_KEY) {
+    if (!API_KEY && (req.body && req.body.mode) !== 'translate') {
         return res.status(500).json({ error: "Missing GEMINI_API_KEY in environment variables." });
     }
 
@@ -69,10 +69,10 @@ export default async function handler(req, res) {
                     lastErr = e; lastResp = null;
                 }
                 const wait = 600 * Math.pow(2, attempt);
-                if (Date.now() - startedAt + wait > 45000) break;
+                if (Date.now() - startedAt + wait > 25000) break;
                 await new Promise(r => setTimeout(r, wait));
             }
-            if (Date.now() - startedAt > 48000) break;
+            if (Date.now() - startedAt > 28000) break;
         }
         if (lastResp) return lastResp;
         throw lastErr || new Error('Gemini request failed');
@@ -87,7 +87,7 @@ export default async function handler(req, res) {
         const mode = body.mode || 'intake';
 
         // =========================================================================
-        // MODE 0: ONE-CLICK CHAT MESSAGE TRANSLATION (LIGHTER MODEL)
+        // MODE 0: ONE-CLICK CHAT MESSAGE TRANSLATION (LOCAL OLLAMA - qwen3.5:4b)
         // =========================================================================
         if (mode === 'translate') {
             const { text, targetLanguage = 'English', viewerRole = 'doctor' } = body;
@@ -124,29 +124,90 @@ Return STRICT JSON matching this schema:
     "detectedLanguage": "Source language"
 }`;
 
-            const transResp = await geminiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: translatePrompt }] }],
-                    generationConfig: {
-                        response_mime_type: "application/json",
-                        temperature: 0.1
-                    }
-                })
-            });
+            const cleanJson = (raw) => {
+                let t = String(raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+                t = t.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+                const parsed = JSON.parse(t);
+                if (!parsed || typeof parsed.translatedText !== 'string' || !parsed.translatedText.trim()) {
+                    throw new Error('Translation response was empty');
+                }
+                return parsed;
+            };
 
-            if (!transResp.ok) {
-                const errText = await transResp.text();
-                throw new Error(`Translation API failed: ${errText}`);
+            // Primary: local Qwen (small language model) through Ollama
+            const viaOllama = async () => {
+                let OLLAMA_URL = String(process.env.OLLAMA_URL || '').trim().replace(/\/+$/, '');
+                if (!OLLAMA_URL) throw new Error('OLLAMA_URL environment variable is not set on the server.');
+                if (!/^https?:\/\//i.test(OLLAMA_URL)) OLLAMA_URL = 'https://' + OLLAMA_URL;
+                const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen3.5:4b';
+                const transResp = await fetch(`${OLLAMA_URL}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+                    signal: AbortSignal.timeout(25000),
+                    body: JSON.stringify({
+                        model: OLLAMA_MODEL,
+                        messages: [{ role: 'user', content: translatePrompt }],
+                        stream: false,
+                        think: false,
+                        keep_alive: '30m',
+                        format: {
+                            type: 'object',
+                            properties: { translatedText: { type: 'string' }, detectedLanguage: { type: 'string' } },
+                            required: ['translatedText', 'detectedLanguage']
+                        },
+                        options: { temperature: 0.1, num_ctx: 2048 }
+                    })
+                });
+                if (!transResp.ok) {
+                    const errText = await transResp.text();
+                    throw new Error(`Ollama Translation API failed (${transResp.status}): ${errText.slice(0, 200)}`);
+                }
+                const transData = await transResp.json();
+                const parsed = cleanJson((transData && transData.message && transData.message.content) || transData.response || '');
+                parsed.modelUsed = OLLAMA_MODEL;
+                return parsed;
+            };
+
+            // Backup: Gemini lite model, used only if the laptop running Ollama / ngrok is offline or slow.
+            // Disable with TRANSLATE_GEMINI_FALLBACK=false.
+            const viaGemini = async () => {
+                if (!API_KEY) throw new Error('No GEMINI_API_KEY for translation fallback.');
+                const gResp = await geminiFetch(`https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:generateContent`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: translatePrompt }] }],
+                        generationConfig: { response_mime_type: 'application/json', temperature: 0.1 }
+                    })
+                });
+                if (!gResp.ok) throw new Error(`Gemini translation fallback failed (${gResp.status})`);
+                const gData = await gResp.json();
+                const parsed = cleanJson(gData?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '');
+                parsed.modelUsed = CHAT_MODEL;
+                parsed.fallbackFrom = 'ollama';
+                return parsed;
+            };
+
+            let result = null;
+            let ollamaErr = null;
+            for (let i = 0; i < 2 && !result; i++) {
+                try {
+                    result = await viaOllama();
+                } catch (e) {
+                    ollamaErr = e;
+                    console.warn(`Ollama translation attempt ${i + 1} failed:`, e.message);
+                    if (/not set/.test(e.message)) break;
+                    await new Promise(r => setTimeout(r, 700));
+                }
             }
-
-            const transData = await transResp.json();
-            const parsedTrans = JSON.parse(transData.candidates[0].content.parts[0].text);
-            parsedTrans.modelUsed = CHAT_MODEL;
-            parsedTrans.targetLanguage = targetLanguage;
-
-            return res.status(200).json(parsedTrans);
+            if (!result && String(process.env.TRANSLATE_GEMINI_FALLBACK || 'true').toLowerCase() !== 'false') {
+                try { result = await viaGemini(); } catch (g) { console.warn('Gemini translation fallback failed:', g.message); }
+            }
+            if (!result) {
+                return res.status(502).json({ error: 'Translation service unavailable.', details: (ollamaErr && ollamaErr.message) || 'Unknown error' });
+            }
+            result.targetLanguage = targetLanguage;
+            return res.status(200).json(result);
         }
 
         // =========================================================================
