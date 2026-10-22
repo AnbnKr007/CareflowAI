@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinic Oversight Console — CareFlow AI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="portal-body clinic-locked">
+    <!-- Clinic Registration & Sign-In Gate -->
+    <div id="clinicAuthGate" class="doctor-login-gate" role="dialog" aria-modal="true" aria-labelledby="clinicGateTitle">
+        <div class="clinic-auth-card">
+            <div class="login-brand">🏥 CareFlow AI • Clinic Registry</div>
+            <h2 id="clinicGateTitle">Clinic Portal Access</h2>
+            <p class="login-sub">Register your clinic with a custom code &amp; 4-digit pass, or sign in to monitor your doctors, cases, and doctor actions.</p>
+
+            <!-- Mode Tabs -->
+            <div class="clinic-auth-tabs">
+                <button type="button" id="tabClinicSignIn" class="clinic-tab-btn active" onclick="switchClinicAuthTab('signin')">Sign In to Clinic</button>
+                <button type="button" id="tabClinicRegister" class="clinic-tab-btn" onclick="switchClinicAuthTab('register')">Register New Clinic</button>
+            </div>
+
+            <!-- Sign-In Form -->
+            <form id="clinicSignInForm" class="clinic-gate-form" autocomplete="off">
+                <label for="signInClinicCode">Clinic Code *</label>
+                <input type="text" id="signInClinicCode" placeholder="e.g. CARE-101" required style="text-transform: uppercase;">
+
+                <label for="signInClinicPass">4-Digit Clinic Pass *</label>
+                <input type="password" id="signInClinicPass" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" required>
+
+                <div id="clinicSignInError" class="login-error" role="alert" style="display: none;"></div>
+
+                <button type="submit" id="clinicSignInBtn" class="primary-btn full-width" style="margin-top:14px;">Open Clinic Oversight Console →</button>
+            </form>
+
+            <!-- Register Form -->
+            <form id="clinicRegisterForm" class="clinic-gate-form" autocomplete="off" style="display: none;">
+                <label for="regClinicName">Clinic / Hospital Name *</label>
+                <input type="text" id="regClinicName" placeholder="e.g. Apollo Multispecialty Clinic" required>
+
+                <div class="form-row" style="margin-top:8px;">
+                    <div class="form-group half" style="margin-bottom:0;">
+                        <label for="regClinicCode">Create Clinic Code *</label>
+                        <input type="text" id="regClinicCode" placeholder="e.g. CARE-101" required style="text-transform: uppercase;">
+                    </div>
+                    <div class="form-group half" style="margin-bottom:0;">
+                        <label for="regClinicPass">Set 4-Digit Pass *</label>
+                        <input type="password" id="regClinicPass" class="pin-input" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="••••" required>
+                    </div>
+                </div>
+
+                <label for="regClinicLocation">City / Address (Optional)</label>
+                <input type="text" id="regClinicLocation" placeholder="e.g. Varanasi, Uttar Pradesh">
+
+                <div id="clinicRegisterError" class="login-error" role="alert" style="display: none;"></div>
+
+                <button type="submit" id="clinicRegisterBtn" class="secondary-btn full-width" style="margin-top:14px;">Register Clinic &amp; Open Console →</button>
+            </form>
+
+            <a href="index.html" class="login-back">← Back to home</a>
+            <p class="login-note">
+                Patients only need your <strong>Clinic Code</strong> to submit cases. Doctors need both your <strong>Clinic Code + 4-Digit Pass</strong> to sign in and attend cases.
+            </p>
+        </div>
+    </div>
+
+    <!-- Top Clinic Navigation Bar -->
+    <header class="portal-topbar">
+        <div class="topbar-left">
+            <a href="index.html" class="back-link">← Home</a>
+            <span class="badge badge-clinic">🏥 Clinic Live Observation Console (Read-Only Oversight)</span>
+        </div>
+        <div id="clinicHeaderRight" class="topbar-right"></div>
+    </header>
+
+    <!-- Clinic Credentials & Command Banner -->
+    <section class="clinic-command-banner">
+        <div class="clinic-identity-block">
+            <div class="clinic-title-row">
+                <h1 id="clinicDisplayName">Loading Clinic...</h1>
+                <span id="clinicLocationBadge" class="demog-pill"></span>
+            </div>
+            <p class="clinic-sub-note">
+                Live read-only oversight of all doctors signed into this clinic, all patient cases across all departments, and what each doctor did to the cases (attending, approved, emergency dispatched, or dissolved).
+            </p>
+        </div>
+
+        <div class="clinic-credentials-box">
+            <div class="cred-item">
+                <span class="cred-label">CLINIC CODE (PATIENTS &amp; DOCTORS)</span>
+                <div class="cred-value-row">
+                    <strong id="bannerClinicCode" class="cred-code">---</strong>
+                    <button type="button" class="chip-btn" onclick="copyClinicCode()">📋 Copy</button>
+                </div>
+            </div>
+
+            <div class="cred-item">
+                <span class="cred-label">DOCTOR 4-DIGIT ACCESS PASS</span>
+                <div class="cred-value-row">
+                    <strong id="bannerClinicPass" class="cred-pass">••••</strong>
+                    <button type="button" id="togglePassBtn" class="chip-btn" onclick="togglePassVisibility()">👁️ Show</button>
+                </div>
+            </div>
+
+            <div class="cred-actions">
+                <button type="button" id="syncClinicBtn" class="primary-btn sm-btn" onclick="syncClinicDashboard()">↻ Refresh Live View</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Clinic-Wide Metrics Bar -->
+    <section class="queue-stats-bar">
+        <div class="stat-pill">👨‍⚕️ Associated Doctors: <strong id="statTotalDoctors">0</strong></div>
+        <div class="stat-pill">📋 Total Cases: <strong id="statTotalCases">0</strong></div>
+        <div class="stat-pill">🩺 Attending / Reviewed: <strong id="statAttendedCases">0</strong></div>
+        <div class="stat-pill">🔒 Dissolved: <strong id="statDissolvedCases">0</strong></div>
+        <div class="stat-pill stat-critical">🔴 Critical: <strong id="statCriticalCases">0</strong></div>
+        <div class="stat-pill stat-urgent">🟠 Urgent: <strong id="statUrgentCases">0</strong></div>
+        <div class="stat-pill stat-routine">🟢 Routine: <strong id="statRoutineCases">0</strong></div>
+    </section>
+
+    <!-- View Mode Filter Bar -->
+    <section class="clinic-control-bar">
+        <div class="clinic-view-toolbar">
+            <div class="clinic-view-tabs">
+                <button type="button" id="viewTabDoctors" class="clinic-view-btn active" onclick="setClinicMainView('doctors')">
+                    👨‍⚕️ Doctors &amp; What They Did (<span id="tabDocCount">0</span>)
+                </button>
+                <button type="button" id="viewTabAllCases" class="clinic-view-btn" onclick="setClinicMainView('cases')">
+                    🗂️ All Clinic Cases &amp; Doctor Actions (<span id="tabCaseCount">0</span>)
+                </button>
+            </div>
+
+            <div class="clinic-Search-filters">
+                <select id="clinicDoctorFilter" onchange="renderClinicViews()">
+                    <option value="ALL">All Doctors</option>
+                </select>
+                <select id="clinicPriorityFilter" onchange="renderClinicViews()">
+                    <option value="ALL">All Priorities</option>
+                    <option value="CRITICAL">🔴 Critical Only</option>
+                    <option value="URGENT">🟠 Urgent Only</option>
+                    <option value="ROUTINE">🟢 Routine Only</option>
+                </select>
+                <select id="clinicStatusFilter" onchange="renderClinicViews()">
+                    <option value="ALL">All Case Statuses</option>
+                    <option value="ATTENDING">🩺 Attending</option>
+                    <option value="APPROVED">✓ Approved / Note Saved</option>
+                    <option value="EMERGENCY_DISPATCHED">🚨 Emergency Dispatched</option>
+                    <option value="DISSOLVED">🔒 Dissolved / Closed</option>
+                    <option value="PENDING_REVIEW">⏳ Pending Initial Review</option>
+                </select>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Read-Only Oversight Container -->
+    <main class="doctor-main-container">
+        <!-- View 1: Doctors & Cases Under Them -->
+        <div id="doctorsWithCasesView">
+            <div id="unattendedCasesBanner" style="display: none; margin-bottom: 24px;"></div>
+            <div id="doctorsRosterContainer" class="clinic-doctors-grid">
+                <div class="loading-box">Loading associated doctors and their case activity...</div>
+            </div>
+        </div>
+
+        <!-- View 2: All Clinic Cases & Doctor Action Logs -->
+        <div id="allClinicCasesView" style="display: none;">
+            <div id="allClinicCasesContainer" class="triage-grid"></div>
+        </div>
+    </main>
+
+    <script src="esi-engine.js"></script>
+    <script src="clinic.js"></script>
+</body>
+</html>
