@@ -50,6 +50,8 @@ export default async function handler(req, res) {
     const FALLBACK_CHAIN = ['gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'];
     const RETRY_STATUS = [408, 429, 500, 502, 503, 504];
     const TRIES_PER_MODEL = 2;
+    const GEMINI_TIMEOUT_MS = 20000;   // a hung Gemini request can never block longer than this
+    const OVERALL_BUDGET_MS = 40000;   // stop starting new attempts after this
 
     const geminiFetch = async (url, options) => {
         const m = url.match(/models\/([^:]+):/);
@@ -61,8 +63,9 @@ export default async function handler(req, res) {
         for (const model of models) {
             const u = primary ? url.replace(`models/${primary}:`, `models/${model}:`) : url;
             for (let attempt = 0; attempt < TRIES_PER_MODEL; attempt++) {
+                if (Date.now() - startedAt > OVERALL_BUDGET_MS) break;
                 try {
-                    const resp = await fetch(u, options);
+                    const resp = await fetch(u, { ...options, signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS) });
                     if (resp.ok) return resp;
                     if (resp.status === 404) { lastResp = resp; lastErr = null; break; }   // model not found -> next model
                     if (!RETRY_STATUS.includes(resp.status)) return resp;                  // 400/401/403: retrying will not help
@@ -72,7 +75,7 @@ export default async function handler(req, res) {
                 }
                 if (attempt < TRIES_PER_MODEL - 1) await new Promise(r => setTimeout(r, 600));
             }
-            if (Date.now() - startedAt > 28000) break;
+            if (Date.now() - startedAt > OVERALL_BUDGET_MS) break;
         }
         if (lastResp) return lastResp;
         throw lastErr || new Error('Gemini request failed');
@@ -81,7 +84,7 @@ export default async function handler(req, res) {
     // -----------------------------------------------------------------------------------------
     // Local Qwen via Ollama (used for chat translation and intake follow-up questions; no Gemini fallback).
     // -----------------------------------------------------------------------------------------
-    const callOllama = async ({ prompt, schema, timeoutMs = 25000 }) => {
+    const callOllama = async ({ prompt, schema, timeoutMs = 15000 }) => {
         let OLLAMA_URL = String(process.env.OLLAMA_URL || '').trim().replace(/\/+$/, '');
         if (!OLLAMA_URL) throw new Error('OLLAMA_URL environment variable is not set on the server.');
         if (!/^https?:\/\//i.test(OLLAMA_URL)) OLLAMA_URL = 'https://' + OLLAMA_URL;
@@ -182,7 +185,7 @@ Return STRICT JSON matching this schema:
                 } catch (e) {
                     ollamaErr = e;
                     console.warn(`Ollama translation attempt ${i + 1} failed:`, e.message);
-                    if (/not set/.test(e.message)) break;
+                    if (/not set/.test(e.message) || e.name === 'TimeoutError') break;   // offline/slow Qwen: don't wait again
                     await new Promise(r => setTimeout(r, 700));
                 }
             }
@@ -483,7 +486,7 @@ Return STRICT JSON: {"followUpQuestions": ["...", "...", "..."]}`;
             let lastErr = null;
             for (let i = 0; i < 2; i++) {
                 try {
-                    const { content, model } = await callOllama({ prompt, schema });
+                    const { content, model } = await callOllama({ prompt, schema, timeoutMs: 8000 });
                     const t = String(content).replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
                     const arr = JSON.parse(t).followUpQuestions;
                     const seen = new Set();
@@ -496,7 +499,7 @@ Return STRICT JSON: {"followUpQuestions": ["...", "...", "..."]}`;
                     lastErr = new Error('Qwen returned no questions');
                 } catch (e) {
                     lastErr = e;
-                    if (/not set/.test(e.message)) break;
+                    if (/not set/.test(e.message) || e.name === 'TimeoutError') break;
                 }
             }
             console.warn('Qwen follow-up questions failed:', lastErr && lastErr.message);
